@@ -7,41 +7,53 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/google/renameio"
-	"github.com/sahib/lemurq/index"
-	"github.com/sahib/lemurq/item"
-	"github.com/sahib/lemurq/vlog"
+	"github.com/sahib/timeq/index"
+	"github.com/sahib/timeq/item"
+	"github.com/sahib/timeq/vlog"
 )
 
-// TODO: add locking and evauluate if we need locking in index/vlog
+type Options struct {
+	// MaxSkew defines how much a key may be shifted in case of duplicates.
+	// This can lead to very small inaccuracies. Zero disables this.
+	MaxSkew int
+}
 
-const (
-	maxBatchSize = 50
-)
-
-func indexNameFromID(id int) string {
-	return fmt.Sprintf("%08X.idx", id)
+func DefaultOptions() Options {
+	return Options{
+		// for nanosecond timestamp keys this would be just 1μs:
+		MaxSkew: 1e3,
+	}
 }
 
 type Bucket struct {
-	mu         sync.Mutex
-	dir        string
-	key        item.Key
-	wal        *vlog.Log
-	indexCount int
-	fullIndex  *index.Index
-	batchIndex *index.Index
+	mu     sync.Mutex
+	dir    string
+	key    item.Key
+	log    *vlog.Log
+	idxLog *index.Writer
+	idx    *index.Index
+	opts   Options
 }
 
-func Open(dir string) (*Bucket, error) {
-	log, err := vlog.Open(filepath.Join(dir, "wal"))
+func Open(dir string, opts Options) (*Bucket, error) {
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, err
+	}
+
+	log, err := vlog.Open(filepath.Join(dir, "dat.log"))
 	if err != nil {
 		return nil, err
 	}
 
-	indexPaths, err := filepath.Glob(filepath.Join(dir, "*.idx"))
+	idxPath := filepath.Join(dir, "idx.log")
+	idx, err := index.Load(idxPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("index load: %w", err)
+	}
+
+	idxLog, err := index.NewWriter(idxPath)
+	if err != nil {
+		return nil, fmt.Errorf("index writer: %w", err)
 	}
 
 	key, err := item.KeyFromString(filepath.Base(dir))
@@ -49,107 +61,73 @@ func Open(dir string) (*Bucket, error) {
 		return nil, err
 	}
 
-	// TODO: Load full index here.
+	return &Bucket{
+		dir:    dir,
+		key:    item.Key(key),
+		log:    log,
+		idx:    idx,
+		idxLog: idxLog,
+		opts:   opts,
+	}, nil
+}
 
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return nil, err
+func (b *Bucket) Sync() error {
+	if err := b.log.Sync(); err != nil {
+		return err
 	}
 
-	return &Bucket{
-		dir:        dir,
-		key:        item.Key(key),
-		wal:        log,
-		indexCount: len(indexPaths),
-		batchIndex: index.Empty(),
-	}, nil
+	if err := b.idxLog.Sync(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (b *Bucket) Close() error {
+	if err := b.log.Close(); err != nil {
+		return err
+	}
+
+	if err := b.idxLog.Close(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (b *Bucket) Push(items []item.Item) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	loc, err := b.wal.Push(items)
+	loc, err := b.log.Push(items)
 	if err != nil {
 		return err
 	}
 
-	// TODO:
-	// Append to index-wal (+ sync)
-	// Update to in-memory index (do duplicate check here?)
-
-	b.batchIndex.Set(loc.Key, loc)
-	b.fullIndex.Set(loc.Key, loc)
-
-	// TODO: Wouldn't it be better to just continously write to that file?
-	if b.batchIndex.Len() > maxBatchSize {
-		if err := b.flushBatchIndex(); err != nil {
-			return err
-		}
-	}
-
-	return b.flushWAL()
-}
-
-func (b *Bucket) flushBatchIndex() error {
-	flags := os.O_TRUNC | os.O_CREATE | os.O_WRONLY
-	fullPath := filepath.Join(b.dir, indexNameFromID(b.indexCount+1))
-	fd, err := os.OpenFile(fullPath, flags, 0600)
+	skewLoc, err := b.idx.SetSkewed(loc, b.opts.MaxSkew)
 	if err != nil {
 		return err
 	}
 
-	defer fd.Close()
-
-	// TODO: Use renameio here too?
-	if err := b.batchIndex.Marshal(fd); err != nil {
+	if err := b.idxLog.Append(skewLoc); err != nil {
 		return err
 	}
 
-	b.indexCount++
-	b.batchIndex = index.Empty()
-	return fd.Sync()
-}
-
-func (b *Bucket) loadFullIndex() error {
-	if b.fullIndex != nil {
-		// nothing to do.
-		return nil
-	}
-
-	// Make sure the batch index will be part of the full index:
-	if err := b.flushBatchIndex(); err != nil {
-		return err
-	}
-
-	fullIndex, err := index.Load(b.dir)
-	if err != nil {
-		return err
-	}
-
-	b.fullIndex = fullIndex
 	return nil
 }
 
-func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, error) {
+func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, int, error) {
+	if n <= 0 {
+		// technically that's a valid usecase.
+		return nil, 0, nil
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if n <= 0 {
-		// technically that's a valid usecase.
-		return nil, nil
-	}
-
-	// Pop() requires a full picture of the index data in the bucket.
-	// Push() may be dumb and just marshal a small amount of the data.
-	// TODO: Now that the index became quite small, can't we just
-	// have a stored index + index-wal? Would be easier than a full merge algo.
-	if err := b.loadFullIndex(); err != nil {
-		return nil, err
-	}
-
 	// Check how many index entries we have to iterate until we can fill up
 	// `dst` with `n` items. Alternatively, all of them have to be used.
-	iter := b.fullIndex.Iter()
+	iter := b.idx.Iter()
 	minEntriesNeeded := 0
 	for count := 0; count < n && iter.Next(); count += int(iter.Value().Len) {
 		minEntriesNeeded++
@@ -168,17 +146,17 @@ func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, error) {
 
 	// Collect all wal iterators that we need to fetch all keys.
 	batchIters := make(vlog.LogIters, 0, minEntriesNeeded)
-	for iter := b.fullIndex.Iter(); iter.Next(); {
+	for iter := b.idx.Iter(); iter.Next(); {
 		loc := iter.Value()
 		if loc.Key >= highestKey {
 			break
 		}
 
-		batchIter := b.wal.At(loc)
-		batchIter.Next()
+		batchIter := b.log.At(loc)
+		batchIter.Next(nil)
 		if err := batchIter.Err(); err != nil {
 			// some error on read.
-			return nil, err
+			return nil, 0, err
 		}
 
 		batchIters = append(batchIters, batchIter)
@@ -186,64 +164,89 @@ func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, error) {
 
 	// Choose the lowest item of all iterators here and make sure the next loop
 	// iteration will yield the next highest key.
+	numAppends := 0
 	heap.Init(batchIters)
 	for len(dst) < n && !batchIters[0].Exhausted() {
 		dst = append(dst, batchIters[0].Item())
-		batchIters[0].Next()
+		numAppends++
+
+		batchIters[0].Next(nil)
 		if err := batchIters[0].Err(); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		heap.Fix(batchIters, 0)
 	}
 
+	// NOTE: In theory we could also use fallocate(FALLOC_FL_ZERO_RANGE) on
+	// ext4 to "put holes" into the log file where we read batches from to save
+	// some space early. This would make sense only for very big buckets
+	// though. We delete the whole bucket once it was completely exhausted
+	// anyways.
+
 	// Now since we've collected all data we need to delete
 	for _, batchIter := range batchIters {
+		currLoc := batchIter.CurrentLocation()
 		if batchIter.Exhausted() {
 			// this batch was fullly exhausted during Pop()
-			b.fullIndex.Delete(batchIter.Key())
-			b.batchIndex.Delete(batchIter.Key())
+			b.idx.Delete(batchIter.Key())
+
+			currLoc.Len = 0
+			if err := b.idxLog.Append(currLoc); err != nil {
+				return nil, 0, fmt.Errorf("idxlog: append delete: %w", err)
+			}
 		} else {
-			currLoc := batchIter.CurrentLocation()
-			b.fullIndex.Set(currLoc.Key, currLoc)
-			b.batchIndex.Set(currLoc.Key, currLoc)
+			// some keys were take from it, but not all (or none)
+			b.idx.Set(currLoc.Key, currLoc)
+			if err := b.idxLog.Append(currLoc); err != nil {
+				return nil, 0, fmt.Errorf("idxlog: append begun: %w", err)
+			}
 		}
 	}
 
-	if err := b.flushAndMergeFullIndex(); err != nil {
-		return dst, err
-	}
-
-	return dst, nil
+	return dst, numAppends, b.idxLog.Sync()
 }
 
-func (b *Bucket) flushWAL() error {
-	return b.wal.Flush()
+func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.key >= key {
+		return 0, nil
+	}
+
+	// TODO: implement.
+	iter := b.idx.Iter()
+	for iter.Next() {
+		// if batch is below key
+	}
+
+	return 0, nil
 }
 
-// flushAndMergeFullIndex realizes any writes made to the index (as done in Pop/Push)
-func (b *Bucket) flushAndMergeFullIndex() error {
-	// TODO: Only flush if changes were made (i.e. dirty flag)?
-	oldIndexes, err := filepath.Glob(filepath.Join(b.dir, "*.idx"))
-	if err != nil {
-		return fmt.Errorf("bucket: flush: glob: %w", err)
+func (b *Bucket) Empty() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.idx.Len() == 0
+}
+
+func (b *Bucket) Key() item.Key {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.key
+}
+
+func (b *Bucket) Size() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	size := 0
+	iter := b.idx.Iter()
+	for iter.Next() {
+		size += int(iter.Value().Len)
 	}
 
-	newIndexName := fmt.Sprintf("%08X.idx", len(oldIndexes)+1)
-	fd, err := renameio.TempFile(b.dir, newIndexName)
-	if err != nil {
-		return fmt.Errorf("bucket: flush: temp: %w", err)
-	}
-	defer fd.Cleanup()
-
-	if err := fd.CloseAtomicallyReplace(); err != nil {
-		return fmt.Errorf("bucket: flush: %w", err)
-	}
-
-	for _, oldIndex := range oldIndexes {
-		// no error check, because removing old index is just an optimization.
-		os.Remove(oldIndex)
-	}
-
-	return nil
+	return size
 }

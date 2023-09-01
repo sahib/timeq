@@ -1,6 +1,6 @@
 package vlog
 
-import "github.com/sahib/lemurq/item"
+import "github.com/sahib/timeq/item"
 
 type LogIter struct {
 	key       item.Key
@@ -12,24 +12,26 @@ type LogIter struct {
 	err       error
 }
 
-// TODO: rather pass item as arg to Next()?
-func (li LogIter) Next() bool {
+func (li LogIter) Next(itDst *item.Item) bool {
 	if li.currLen == 0 || li.exhausted {
 		li.exhausted = true
 		return false
 	}
 
-	it, err := li.log.at(li.currOff)
-	if err != nil {
+	if err := li.log.readItemAt(li.currOff, &li.item); err != nil {
 		li.err = err
 		li.exhausted = true
 		return false
 	}
 
 	// advance iter to next position:
-	li.currOff += item.Off(len(it.Blob) + itemHeaderSize)
+	li.currOff += item.Off(len(li.item.Blob) + itemHeaderSize)
 	li.currLen--
-	li.item = it
+
+	if itDst != nil {
+		*itDst = li.item
+	}
+
 	return true
 }
 
@@ -49,9 +51,9 @@ func (li LogIter) Item() item.Item {
 
 func (li LogIter) CurrentLocation() item.Location {
 	return item.Location{
-		Key:  li.item.Key,
-		Off:  li.currOff,
-		Len:  li.currLen,
+		Key: li.item.Key,
+		Off: li.currOff,
+		Len: li.currLen,
 	}
 }
 

@@ -6,17 +6,16 @@ import (
 	"os"
 
 	"github.com/edsrzf/mmap-go"
-	"github.com/sahib/lemurq/item"
+	"github.com/sahib/timeq/item"
 	"golang.org/x/sys/unix"
 )
 
 const itemHeaderSize = 12
 
 type Log struct {
-	dirty bool
-	fd    *os.File
-	size  int64
-	mmap  mmap.MMap
+	fd   *os.File
+	mmap mmap.MMap
+	size int64
 }
 
 func Open(path string) (*Log, error) {
@@ -31,8 +30,14 @@ func Open(path string) (*Log, error) {
 		return nil, fmt.Errorf("log: stat: %w", err)
 	}
 
+	m, err := mmap.Map(fd, mmap.RDWR, 0)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Log{
 		fd:   fd,
+		mmap: m,
 		size: info.Size(),
 	}, nil
 }
@@ -50,54 +55,45 @@ func (l *Log) Push(items []item.Item) (item.Location, error) {
 	}
 
 	loc := item.Location{
+		Key: items[0].Key,
 		Off: item.Off(l.size),
 		Len: item.Off(addSize),
 	}
 
 	// extend the wal file to fit the new items:
-	if err := l.fd.Truncate(l.size + int64(addSize)); err != nil {
+	newSize := l.size + int64(addSize)
+	if err := l.fd.Truncate(newSize); err != nil {
 		return item.Location{}, err
 	}
+
+	m, err := unix.Mremap(l.mmap, int(newSize), unix.MREMAP_MAYMOVE)
+	if err != nil {
+		return item.Location{}, err
+	}
+
+	l.size = newSize
+	l.mmap = m
 
 	// copy the items to the file map:
 	for i := 0; i < len(items); i++ {
 		l.writeItem(items[i])
 	}
 
-	l.dirty = true
-	return loc, nil
+	return loc, l.Sync()
 }
 
 func (l *Log) At(loc item.Location) LogIter {
 	return LogIter{
-		log: l,
-		loc: loc,
+		key:     loc.Key,
+		currOff: loc.Off,
+		currLen: loc.Len,
+		log:     l,
 	}
 }
 
-func (l *Log) at(off item.Off) (item.Item, error) {
-	if len(l.mmap) == 0 {
-		m, err := mmap.Map(l.fd, mmap.RDWR, 0)
-		if err != nil {
-			return item.Item{}, err
-		}
-
-		l.mmap = m
-		l.dirty = false
-	}
-
-	if l.dirty {
-		m, err := unix.Mremap(l.mmap, int(l.size), unix.MREMAP_MAYMOVE)
-		if err != nil {
-			return item.Item{}, err
-		}
-
-		l.mmap = m
-		l.dirty = false
-	}
-
+func (l *Log) readItemAt(off item.Off, it *item.Item) error {
 	if int64(off)+itemHeaderSize >= l.size {
-		return item.Item{}, fmt.Errorf("log: bad offset: %d %d (header too big)", off, l.size)
+		return fmt.Errorf("log: bad offset: %d %d (header too big)", off, l.size)
 	}
 
 	// parse header:
@@ -105,30 +101,31 @@ func (l *Log) at(off item.Off) (item.Item, error) {
 	key := binary.BigEndian.Uint64(l.mmap[off+4:])
 
 	if len > 4*1024*1024 {
-		return item.Item{}, fmt.Errorf("log: allocation too big for one value: %d", len)
+		return fmt.Errorf("log: allocation too big for one value: %d", len)
 	}
 
 	if int64(off)+itemHeaderSize+int64(len) >= l.size {
-		return item.Item{}, fmt.Errorf("log: bad offset: %d+%d %d (payload too big)", off, len, l.size)
+		return fmt.Errorf("log: bad offset: %d+%d %d (payload too big)", off, len, l.size)
 	}
 
-	// TODO: We could think about not copying here, but returning the slice.
-	//       Then the caller would need to copy it, but it could segfault anytime
-	//       when the bucket is closed.
-	blob := make([]byte, len)
-	copy(blob, l.mmap[off+itemHeaderSize:])
-	return item.Item{
+	// NOTE: We directly slice the memory map here. This means that the caller
+	// has to copy the slice if he wants to save it somewhere as we might overwrite,
+	// unmap or resize the underlying memory at a later point. Caller can use item.Copy()
+	// to obtain a copy.
+	*it = item.Item{
 		Key:  item.Key(key),
-		Blob: blob,
-	}, nil
+		Blob: l.mmap[off+itemHeaderSize:],
+	}
+
+	return nil
 }
 
-func (l *Log) Flush() error {
+func (l *Log) Sync() error {
 	return unix.Msync(l.mmap, unix.MS_SYNC)
 }
 
 func (l *Log) Close() error {
-	l.Flush()
+	l.Sync()
 	l.mmap.Unmap()
 	return l.fd.Close()
 }

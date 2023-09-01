@@ -1,38 +1,54 @@
-package lemurq
+package timeq
 
 import (
+	"fmt"
 	"slices"
 
-	"github.com/sahib/lemurq/bucket"
-	"github.com/sahib/lemurq/item"
+	"github.com/sahib/timeq/bucket"
+	"github.com/sahib/timeq/item"
 )
 
-// TODO: own type for Key, Off and IndexID
+type Item = item.Item
+type Items []Item
+type Key = item.Key
 
-// TODO: find out how to convince the compiler
-// how to convert this
-type Item item.Item
-
-func keyTrunc(key item.Key) item.Key {
+func Trunc30mBuckets(key Key) Key {
 	// This should yield roughly 30m buckets.
 	// (and saves us expensive divisions)
 	return key & (^item.Key(0) << 40)
 }
 
-type Queue struct {
-	buckets *bucket.Buckets
+type Options struct {
+	bucket.Options
+	TruncFunc func(Key) Key
+	// TODO: Add option for sync mode here and write docs.
 }
 
-func Open(dir string) (*Queue, error) {
-	bs, err := bucket.LoadAll(dir)
+func DefaultOptions() Options {
+	return Options{
+		Options:   bucket.DefaultOptions(),
+		TruncFunc: Trunc30mBuckets,
+	}
+}
+
+type Queue struct {
+	buckets *bucket.Buckets
+	opts    Options
+}
+
+func Open(dir string, opts Options) (*Queue, error) {
+	bs, err := bucket.LoadAll(dir, opts.Options)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Queue{buckets: bs}, nil
+	return &Queue{
+		opts:    opts,
+		buckets: bs,
+	}, nil
 }
 
-func (q *Queue) Push(items []item.Item) error {
+func (q *Queue) Push(items Items) error {
 	slices.SortFunc(items, func(i, j item.Item) int {
 		return int(i.Key - j.Key)
 	})
@@ -41,30 +57,42 @@ func (q *Queue) Push(items []item.Item) error {
 	var lastKeyMod item.Key
 	var lastKeyIdx int
 	for idx := 0; idx < len(items); idx++ {
-		keyMod := keyTrunc(items[idx].Key)
-		if keyMod != lastKeyMod {
-			b := q.buckets.ByKey(keyMod)
-			if b == nil {
-				continue
-			}
-
-			b.Push(items[lastKeyIdx:idx])
-			lastKeyMod = keyMod
-			lastKeyIdx = idx
+		keyMod := q.opts.TruncFunc(items[idx].Key)
+		if keyMod == lastKeyMod {
+			continue
 		}
-	}
-	return nil
-}
 
-func (q *Queue) Pop(n int, dst []item.Item) ([]item.Item, error) {
-	count := n
-	return dst, q.buckets.Iter(func(b *bucket.Bucket) error {
-		var err error
-		dst, popped, err = b.Pop(count, dst)
+		buck, err := q.buckets.ByKey(keyMod)
 		if err != nil {
 			return err
 		}
 
+		if err := buck.Push(items[lastKeyIdx:idx]); err != nil {
+			return err
+		}
+
+		lastKeyMod = keyMod
+		lastKeyIdx = idx
+	}
+
+	return nil
+}
+
+func (q *Queue) Pop(n int, dst Items) (Items, error) {
+	var count = n
+	var toBeDeleted []*bucket.Bucket
+
+	err := q.buckets.Iter(func(b *bucket.Bucket) error {
+		newDst, popped, err := b.Pop(count, dst)
+		if err != nil {
+			return err
+		}
+
+		if b.Empty() {
+			toBeDeleted = append(toBeDeleted, b)
+		}
+
+		dst = newDst
 		count -= popped
 		if count <= 0 {
 			return bucket.IterStop
@@ -72,20 +100,49 @@ func (q *Queue) Pop(n int, dst []item.Item) ([]item.Item, error) {
 
 		return nil
 	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Delete buckets that were exhausted:
+	for _, bucket := range toBeDeleted {
+		if err := q.buckets.Delete(bucket.Key()); err != nil {
+			return dst, fmt.Errorf("bucket delete: %w", err)
+		}
+	}
+
+	return dst, nil
 }
 
-func (q *Queue) ClearUntil(key int64) error {
-	return nil
+// DeleteLowerThan deletes all items lower than `key`.
+func (q *Queue) DeleteLowerThan(key Key) (int, error) {
+	var deleted int
+	var err error
+	return deleted, q.buckets.Iter(func(b *bucket.Bucket) error {
+		deleted, err = b.DeleteLowerThan(key)
+		return err
+	})
 }
 
 func (q *Queue) Size() int {
-	return 0
+	var size int
+	q.buckets.Iter(func(b *bucket.Bucket) error {
+		size += b.Size()
+		return nil
+	})
+
+	return size
 }
 
-func (q *Queue) Flush() error {
-	return nil
+func (q *Queue) Sync() error {
+	return q.buckets.Iter(func(b *bucket.Bucket) error {
+		return b.Sync()
+	})
 }
 
 func (q *Queue) Close() error {
-	return nil
+	return q.buckets.Iter(func(b *bucket.Bucket) error {
+		return b.Close()
+	})
 }

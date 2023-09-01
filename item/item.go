@@ -32,7 +32,18 @@ type Item struct {
 	Blob []byte
 }
 
-// TODO: Introduce "Skew" attribute that is an offset to key.
+func (i *Item) String() string {
+	return fmt.Sprintf("%d:%s", i.Key, i.Blob)
+}
+
+func (i *Item) Copy() Item {
+	blob := make([]byte, len(i.Blob))
+	copy(blob, i.Blob)
+	return Item{
+		Key:  i.Key,
+		Blob: blob,
+	}
+}
 
 // Location references the location of a batch in a
 type Location struct {
@@ -43,5 +54,6 @@ type Location struct {
 	Off Off
 
 	// Len is the number of items in this batch.
+	// A zero len has a special meaning: this batch was deleted.
 	Len Off
 }

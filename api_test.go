@@ -1,10 +1,10 @@
-package lemurq
+package timeq
 
 import (
 	"testing"
 	"time"
 
-	"github.com/sahib/lemurq/item"
+	"github.com/sahib/timeq/item"
 	"github.com/stretchr/testify/require"
 )
 
