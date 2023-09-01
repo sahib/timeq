@@ -36,7 +36,7 @@ func TestOpenUnaligned(t *testing.T) {
 	logPath := filepath.Join(tmpDir, "log")
 	require.NoError(t, os.WriteFile(logPath, fakeBlob, 0600))
 
-	log, err := Open(logPath)
+	log, err := Open(logPath, true)
 	require.NoError(t, err)
 	require.NoError(t, log.Close())
 }
@@ -46,7 +46,7 @@ func TestOpenEmpty(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	log, err := Open(filepath.Join(tmpDir, "log"))
+	log, err := Open(filepath.Join(tmpDir, "log"), true)
 	require.NoError(t, err)
 	require.NoError(t, log.Close())
 }
@@ -56,7 +56,7 @@ func TestOpenPushRead(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	log, err := Open(filepath.Join(tmpDir, "log"))
+	log, err := Open(filepath.Join(tmpDir, "log"), true)
 	require.NoError(t, err)
 
 	loc, err := log.Push(genItems(1, 2, 1))

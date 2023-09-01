@@ -15,7 +15,7 @@ func TestIndexLoad(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	indexPath := filepath.Join(tmpDir, "index")
-	w, err := NewWriter(indexPath)
+	w, err := NewWriter(indexPath, true)
 	require.NoError(t, err)
 
 	for idx := 0; idx < 10; idx++ {

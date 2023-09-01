@@ -11,9 +11,10 @@ import (
 type Writer struct {
 	fd     *os.File
 	locBuf []byte
+	sync   bool
 }
 
-func NewWriter(path string) (*Writer, error) {
+func NewWriter(path string, sync bool) (*Writer, error) {
 	flags := os.O_APPEND | os.O_CREATE | os.O_WRONLY
 	fd, err := os.OpenFile(path, flags, 0600)
 	if err != nil {
@@ -41,5 +42,9 @@ func (w *Writer) Close() error {
 }
 
 func (w *Writer) Sync() error {
+	if !w.sync {
+		return nil
+	}
+
 	return w.fd.Sync()
 }

@@ -12,7 +12,7 @@ type Item = item.Item
 type Items []Item
 type Key = item.Key
 
-func Trunc30mBuckets(key Key) Key {
+func ThirtyMinBuckets(key Key) Key {
 	// This should yield roughly 30m buckets.
 	// (and saves us expensive divisions)
 	return key & (^item.Key(0) << 40)
@@ -20,14 +20,18 @@ func Trunc30mBuckets(key Key) Key {
 
 type Options struct {
 	bucket.Options
-	TruncFunc func(Key) Key
-	// TODO: Add option for sync mode here and write docs.
+
+	// BucketFunc defines what key goes to what bucket.
+	// The provided function should clamp the key value to
+	// a common value. Each same value that was returned goes
+	// into the same bucket.
+	BucketFunc func(Key) Key
 }
 
 func DefaultOptions() Options {
 	return Options{
-		Options:   bucket.DefaultOptions(),
-		TruncFunc: Trunc30mBuckets,
+		Options:    bucket.DefaultOptions(),
+		BucketFunc: ThirtyMinBuckets,
 	}
 }
 
@@ -57,7 +61,7 @@ func (q *Queue) Push(items Items) error {
 	var lastKeyMod item.Key
 	var lastKeyIdx int
 	for idx := 0; idx < len(items); idx++ {
-		keyMod := q.opts.TruncFunc(items[idx].Key)
+		keyMod := q.opts.BucketFunc(items[idx].Key)
 		if keyMod == lastKeyMod {
 			continue
 		}

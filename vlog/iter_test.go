@@ -15,7 +15,7 @@ func TestIter(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	log, err := Open(filepath.Join(tmpDir, "log"))
+	log, err := Open(filepath.Join(tmpDir, "log"), true)
 	require.NoError(t, err)
 
 	// Push a few items before:
@@ -59,7 +59,7 @@ func TestIterEmpty(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	log, err := Open(filepath.Join(tmpDir, "log"))
+	log, err := Open(filepath.Join(tmpDir, "log"), true)
 	require.NoError(t, err)
 
 	iter := log.At(item.Location{})
@@ -74,7 +74,7 @@ func TestIterInvalidLocation(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	log, err := Open(filepath.Join(tmpDir, "log"))
+	log, err := Open(filepath.Join(tmpDir, "log"), true)
 	require.NoError(t, err)
 
 	iter := log.At(item.Location{

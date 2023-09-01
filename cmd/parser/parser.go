@@ -5,23 +5,53 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sahib/timeq"
+	"github.com/sahib/timeq/bucket"
+	"github.com/sahib/timeq/item"
 	"github.com/urfave/cli"
 )
 
-func optionsFromCtx(ctx *cli.Context) timeq.Options {
-	// TODO: actually read options and decide which one make sense
-	// bucket-size (convert to func)
-	// max skew, sync options.
-	return timeq.DefaultOptions()
+func optionsFromCtx(ctx *cli.Context) (timeq.Options, error) {
+	opts := timeq.DefaultOptions()
+	opts.MaxSkew = ctx.GlobalDuration("max-skew")
+
+	switch mode := ctx.GlobalString("sync-mode"); mode {
+	case "full":
+		opts.SyncMode = bucket.SyncFull
+	case "data":
+		opts.SyncMode = bucket.SyncData
+	case "index":
+		opts.SyncMode = bucket.SyncIndex
+	case "none":
+		opts.SyncMode = bucket.SyncNone
+	default:
+		return opts, fmt.Errorf("invalid sync mode: %s", mode)
+	}
+
+	bucketSize := ctx.GlobalDuration("bucket-size")
+	if bucketSize <= 0 {
+		return opts, fmt.Errorf("invalid bucket size: %v", bucketSize)
+	}
+
+	opts.BucketFunc = func(key item.Key) item.Key {
+		return key / item.Key(bucketSize)
+	}
+
+	return opts, nil
 }
 
 func withQueue(fn func(ctx *cli.Context, q *timeq.Queue) error) cli.ActionFunc {
 	return func(ctx *cli.Context) error {
 		dir := ctx.GlobalString("dir")
 
-		queue, err := timeq.Open(dir, optionsFromCtx(ctx))
+		opts, err := optionsFromCtx(ctx)
+		if err != nil {
+			return err
+		}
+
+		queue, err := timeq.Open(dir, opts)
 		if err != nil {
 			return err
 		}
@@ -53,6 +83,24 @@ func Run(args []string) error {
 			Usage:  "Path to storage directory (defaults to curent working dir)",
 			EnvVar: "TIMEQ_DIR",
 			Value:  cwd,
+		},
+		cli.DurationFlag{
+			Name:   "max-skew",
+			Usage:  "Max skew of timestamps in case of duplicated batches",
+			EnvVar: "TIMEQ_MAX_SKEW",
+			Value:  time.Millisecond,
+		},
+		cli.StringFlag{
+			Name:   "sync-mode",
+			Usage:  "What sync mode to use ('none', 'full', 'data', 'index')",
+			EnvVar: "TIMEQ_SYNC_MODE",
+			Value:  "full",
+		},
+		cli.DurationFlag{
+			Name:   "bucket-size",
+			Usage:  "The size of each bucket as time duration",
+			EnvVar: "TIMEQ_BUCKET_SIZE",
+			Value:  30 * time.Minute,
 		},
 	}
 

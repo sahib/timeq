@@ -16,9 +16,10 @@ type Log struct {
 	fd   *os.File
 	mmap []byte
 	size int64
+	sync bool
 }
 
-func Open(path string) (*Log, error) {
+func Open(path string, sync bool) (*Log, error) {
 	flags := os.O_APPEND | os.O_CREATE | os.O_RDWR
 	fd, err := os.OpenFile(path, flags, 0600)
 	if err != nil {
@@ -146,11 +147,15 @@ func (l *Log) readItemAt(off item.Off, it *item.Item) error {
 }
 
 func (l *Log) Sync() error {
+	if !l.sync {
+		return nil
+	}
+
 	return unix.Msync(l.mmap, unix.MS_SYNC)
 }
 
 func (l *Log) Close() error {
-	syncErr := l.Sync()
+	syncErr := unix.Msync(l.mmap, unix.MS_SYNC)
 	unmapErr := unix.Munmap(l.mmap)
 	closeErr := l.fd.Close()
 	return errors.Join(syncErr, unmapErr, closeErr)

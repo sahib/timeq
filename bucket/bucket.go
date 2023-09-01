@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/sahib/timeq/index"
 	"github.com/sahib/timeq/item"
@@ -13,16 +14,37 @@ import (
 	"golang.org/x/exp/slog"
 )
 
+type SyncMode int
+
+// The available option are inspired by SQLite:
+// https://www.sqlite.org/pragma.html#pragma_synchronous
+const (
+	// SyncNone does not sync on normal operation (only on close)
+	SyncNone = SyncMode(1 << iota)
+	// SyncData only synchronizes the data log
+	SyncData
+	// SyncIndex only synchronizes the index log (does not make sense alone)
+	SyncIndex
+	// SyncFull syncs both the data and index log
+	SyncFull = SyncData | SyncIndex
+)
+
 type Options struct {
 	// MaxSkew defines how much a key may be shifted in case of duplicates.
 	// This can lead to very small inaccuracies. Zero disables this.
-	MaxSkew int
+	MaxSkew time.Duration
+
+	// SyncMode controls how often we sync data to the disk. The more data we sync
+	// the more durable is the queue at the cost of throughput.
+	SyncMode SyncMode
 }
 
 func DefaultOptions() Options {
 	return Options{
-		// for nanosecond timestamp keys this would be just 1μs:
-		MaxSkew: 1e3,
+		// 1us is plenty time to shift a key
+		MaxSkew: time.Microsecond,
+		// default is to be safe:
+		SyncMode: SyncFull,
 	}
 }
 
@@ -41,7 +63,7 @@ func Open(dir string, opts Options) (*Bucket, error) {
 		return nil, err
 	}
 
-	log, err := vlog.Open(filepath.Join(dir, "dat.log"))
+	log, err := vlog.Open(filepath.Join(dir, "dat.log"), opts.SyncMode&SyncData > 0)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +74,7 @@ func Open(dir string, opts Options) (*Bucket, error) {
 		return nil, fmt.Errorf("index load: %w", err)
 	}
 
-	idxLog, err := index.NewWriter(idxPath)
+	idxLog, err := index.NewWriter(idxPath, opts.SyncMode&SyncIndex > 0)
 	if err != nil {
 		return nil, fmt.Errorf("index writer: %w", err)
 	}
@@ -105,8 +127,9 @@ func (b *Bucket) Push(items []item.Item) error {
 		return err
 	}
 
-	skewLoc, skews := b.idx.SetSkewed(loc, b.opts.MaxSkew)
-	if skews == b.opts.MaxSkew {
+	maxSkew := int(b.opts.MaxSkew)
+	skewLoc, skews := b.idx.SetSkewed(loc, maxSkew)
+	if skews == maxSkew {
 		// at least warn user since this might lead to lost data:
 		slog.Warn("push: maximum skew was reached", "key", loc.Key, "skew", b.opts.MaxSkew)
 	}
@@ -214,9 +237,11 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 	defer b.mu.Unlock()
 
 	if b.key >= key {
+		// this bucket is safe from the clear.
 		return 0, nil
 	}
 
+	var numDeleted int
 	for iter := b.idx.Iter(); iter.Next(); {
 		loc := iter.Value()
 		if loc.Key >= key {
@@ -244,14 +269,16 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 				Off: partialLoc.Off,
 				Len: partialLoc.Len,
 			})
+			numDeleted += int(loc.Len - partialLoc.Len)
 		} else {
 			// nothing found, this index entry can be dropped.
 			// TODO: can we do that while iterating?
 			b.idx.Delete(loc.Key)
+			numDeleted += int(loc.Len)
 		}
 	}
 
-	return 0, nil
+	return numDeleted, b.idxLog.Sync()
 }
 
 func (b *Bucket) Empty() bool {
