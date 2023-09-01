@@ -10,6 +10,7 @@ import (
 	"github.com/sahib/timeq/index"
 	"github.com/sahib/timeq/item"
 	"github.com/sahib/timeq/vlog"
+	"golang.org/x/exp/slog"
 )
 
 type Options struct {
@@ -104,13 +105,14 @@ func (b *Bucket) Push(items []item.Item) error {
 		return err
 	}
 
-	skewLoc, err := b.idx.SetSkewed(loc, b.opts.MaxSkew)
-	if err != nil {
-		return err
+	skewLoc, skews := b.idx.SetSkewed(loc, b.opts.MaxSkew)
+	if skews == b.opts.MaxSkew {
+		// at least warn user since this might lead to lost data:
+		slog.Warn("push: maximum skew was reached", "key", loc.Key, "skew", b.opts.MaxSkew)
 	}
 
-	if err := b.idxLog.Append(skewLoc); err != nil {
-		return err
+	if err := b.idxLog.Push(skewLoc); err != nil {
+		return fmt.Errorf("push: index-log: %w", err)
 	}
 
 	return nil
@@ -192,13 +194,13 @@ func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, int, error) {
 			b.idx.Delete(batchIter.Key())
 
 			currLoc.Len = 0
-			if err := b.idxLog.Append(currLoc); err != nil {
+			if err := b.idxLog.Push(currLoc); err != nil {
 				return nil, 0, fmt.Errorf("idxlog: append delete: %w", err)
 			}
 		} else {
 			// some keys were take from it, but not all (or none)
 			b.idx.Set(currLoc.Key, currLoc)
-			if err := b.idxLog.Append(currLoc); err != nil {
+			if err := b.idxLog.Push(currLoc); err != nil {
 				return nil, 0, fmt.Errorf("idxlog: append begun: %w", err)
 			}
 		}
@@ -215,10 +217,38 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 		return 0, nil
 	}
 
-	// TODO: implement.
-	iter := b.idx.Iter()
-	for iter.Next() {
-		// if batch is below key
+	for iter := b.idx.Iter(); iter.Next(); {
+		loc := iter.Value()
+		if loc.Key >= key {
+			// this index entry may live.
+			break
+		}
+
+		// we need to check until what point we need to delete.
+		var partialFound bool
+		var partialItem item.Item
+		var partialLoc item.Location
+		for logIter := b.log.At(loc); logIter.Next(&partialItem); {
+			if partialItem.Key >= key {
+				partialFound = true
+				partialLoc = logIter.CurrentLocation()
+				break
+			}
+		}
+
+		if partialFound {
+			// we found an enrty in the log that is >= key.
+			// resize the index entry to skip the entries before.
+			b.idx.Set(loc.Key, item.Location{
+				Key: partialItem.Key,
+				Off: partialLoc.Off,
+				Len: partialLoc.Len,
+			})
+		} else {
+			// nothing found, this index entry can be dropped.
+			// TODO: can we do that while iterating?
+			b.idx.Delete(loc.Key)
+		}
 	}
 
 	return 0, nil

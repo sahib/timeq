@@ -2,6 +2,7 @@ package index
 
 import (
 	"encoding/binary"
+	"errors"
 	"os"
 
 	"github.com/sahib/timeq/item"
@@ -25,7 +26,7 @@ func NewWriter(path string) (*Writer, error) {
 	}, nil
 }
 
-func (w *Writer) Append(loc item.Location) error {
+func (w *Writer) Push(loc item.Location) error {
 	binary.BigEndian.PutUint64(w.locBuf[:8], uint64(loc.Key))
 	binary.BigEndian.PutUint32(w.locBuf[8:], uint32(loc.Off))
 	binary.BigEndian.PutUint32(w.locBuf[12:], uint32(loc.Len))
@@ -34,8 +35,9 @@ func (w *Writer) Append(loc item.Location) error {
 }
 
 func (w *Writer) Close() error {
-	w.fd.Sync()
-	return w.fd.Close()
+	syncErr := w.fd.Sync()
+	closeErr := w.fd.Close()
+	return errors.Join(syncErr, closeErr)
 }
 
 func (w *Writer) Sync() error {

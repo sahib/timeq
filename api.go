@@ -117,17 +117,39 @@ func (q *Queue) Pop(n int, dst Items) (Items, error) {
 
 // DeleteLowerThan deletes all items lower than `key`.
 func (q *Queue) DeleteLowerThan(key Key) (int, error) {
-	var deleted int
-	var err error
-	return deleted, q.buckets.Iter(func(b *bucket.Bucket) error {
-		deleted, err = b.DeleteLowerThan(key)
-		return err
+	var numDeleted int
+	var deletableBucks []*bucket.Bucket
+
+	err := q.buckets.Iter(func(bucket *bucket.Bucket) error {
+		numDeletedOfBucket, err := bucket.DeleteLowerThan(key)
+		if err != nil {
+			return err
+		}
+
+		numDeleted += numDeletedOfBucket
+		if bucket.Empty() {
+			deletableBucks = append(deletableBucks, bucket)
+		}
+
+		return nil
 	})
+
+	if err != nil {
+		return numDeleted, err
+	}
+
+	for _, bucket := range deletableBucks {
+		if err := q.buckets.Delete(bucket.Key()); err != nil {
+			return numDeleted, fmt.Errorf("bucket delete: %w", err)
+		}
+	}
+
+	return numDeleted, nil
 }
 
 func (q *Queue) Size() int {
 	var size int
-	q.buckets.Iter(func(b *bucket.Bucket) error {
+	_ = q.buckets.Iter(func(b *bucket.Bucket) error {
 		size += b.Size()
 		return nil
 	})

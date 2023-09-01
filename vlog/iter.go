@@ -1,6 +1,10 @@
 package vlog
 
-import "github.com/sahib/timeq/item"
+import (
+	"github.com/sahib/timeq/item"
+)
+
+// TODO: I don't really like the API here. That iter is too fat.
 
 type LogIter struct {
 	key       item.Key
@@ -12,7 +16,7 @@ type LogIter struct {
 	err       error
 }
 
-func (li LogIter) Next(itDst *item.Item) bool {
+func (li *LogIter) Next(itDst *item.Item) bool {
 	if li.currLen == 0 || li.exhausted {
 		li.exhausted = true
 		return false
@@ -35,21 +39,21 @@ func (li LogIter) Next(itDst *item.Item) bool {
 	return true
 }
 
-func (li LogIter) Exhausted() bool {
+func (li *LogIter) Exhausted() bool {
 	return li.exhausted
 }
 
 // Key returns the key this iterator was created with
 // This is not the current key of the item!
-func (li LogIter) Key() item.Key {
+func (li *LogIter) Key() item.Key {
 	return li.key
 }
 
-func (li LogIter) Item() item.Item {
+func (li *LogIter) Item() item.Item {
 	return li.item
 }
 
-func (li LogIter) CurrentLocation() item.Location {
+func (li *LogIter) CurrentLocation() item.Location {
 	return item.Location{
 		Key: li.item.Key,
 		Off: li.currOff,
@@ -57,7 +61,7 @@ func (li LogIter) CurrentLocation() item.Location {
 	}
 }
 
-func (li LogIter) Err() error {
+func (li *LogIter) Err() error {
 	return li.err
 }
 

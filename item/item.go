@@ -32,7 +32,7 @@ type Item struct {
 	Blob []byte
 }
 
-func (i *Item) String() string {
+func (i Item) String() string {
 	return fmt.Sprintf("%d:%s", i.Key, i.Blob)
 }
 
@@ -56,4 +56,8 @@ type Location struct {
 	// Len is the number of items in this batch.
 	// A zero len has a special meaning: this batch was deleted.
 	Len Off
+}
+
+func (l Location) String() string {
+	return fmt.Sprintf("[key=%d, off=%d, len=%d]", l.Key, l.Off, l.Len)
 }

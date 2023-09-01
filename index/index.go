@@ -1,7 +1,6 @@
 package index
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/sahib/timeq/item"
@@ -38,11 +37,11 @@ func Load(path string) (*Index, error) {
 	return &index, rdr.Err()
 }
 
-func (i *Index) SetSkewed(loc item.Location, maxSkew int) (item.Location, error) {
+func (i *Index) SetSkewed(loc item.Location, maxSkew int) (item.Location, int) {
 	prev, ok := i.Set(loc.Key, loc)
 	if !ok {
 		// fast path: no dedup needed.
-		return loc, nil
+		return loc, 0
 	}
 
 	// restore previous state:
@@ -51,16 +50,16 @@ func (i *Index) SetSkewed(loc item.Location, maxSkew int) (item.Location, error)
 	// try to find a unique timestamp by cheating a little:
 	var skew item.Key
 	for skew < item.Key(maxSkew) {
-		loc, ok := i.Get(loc.Key + skew)
-		if !ok {
-			// no entry yet.
-			loc.Key += skew
-			i.Set(loc.Key, loc)
-			return loc, nil
+		if _, ok := i.Get(loc.Key + skew); ok {
+			skew++
+			continue
 		}
 
-		skew++
+		// no entry with that key yet.
+		loc.Key += skew
+		i.Set(loc.Key, loc)
+		return loc, int(skew)
 	}
 
-	return loc, fmt.Errorf("skew too high: %v", skew)
+	return loc, maxSkew
 }
