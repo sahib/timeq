@@ -99,7 +99,7 @@ func (l *Log) Push(items []item.Item) (item.Location, error) {
 		l.size += int64(itemHeaderSize + len(items[i].Blob))
 	}
 
-	return loc, l.Sync()
+	return loc, l.Sync(false)
 }
 
 func (l *Log) At(loc item.Location) LogIter {
@@ -146,8 +146,8 @@ func (l *Log) readItemAt(off item.Off, it *item.Item) error {
 	return nil
 }
 
-func (l *Log) Sync() error {
-	if !l.sync {
+func (l *Log) Sync(force bool) error {
+	if !l.sync && !force {
 		return nil
 	}
 

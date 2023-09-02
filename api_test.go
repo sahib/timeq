@@ -10,9 +10,9 @@ import (
 
 func TestKeyTrunc(t *testing.T) {
 	stamp := time.Date(2023, 1, 1, 12, 13, 14, 15, time.UTC)
-	trunc1 := ThirtyMinBuckets(item.Key(stamp.UnixNano()))
-	trunc2 := ThirtyMinBuckets(item.Key(stamp.Add(time.Minute).UnixNano()))
-	trunc3 := ThirtyMinBuckets(item.Key(stamp.Add(time.Hour).UnixNano()))
+	trunc1 := DefaultBucketFunc(item.Key(stamp.UnixNano()))
+	trunc2 := DefaultBucketFunc(item.Key(stamp.Add(time.Minute).UnixNano()))
+	trunc3 := DefaultBucketFunc(item.Key(stamp.Add(time.Hour).UnixNano()))
 
 	// First two stamps only differ by one minute. They should be truncated
 	// to the same value. One hour further should yield a different value.

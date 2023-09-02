@@ -41,8 +41,8 @@ func (w *Writer) Close() error {
 	return errors.Join(syncErr, closeErr)
 }
 
-func (w *Writer) Sync() error {
-	if !w.sync {
+func (w *Writer) Sync(force bool) error {
+	if !w.sync && !force {
 		return nil
 	}
 

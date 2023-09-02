@@ -31,6 +31,7 @@ const (
 	SyncFull = SyncData | SyncIndex
 )
 
+// Options are fine-tuning knobs specific to individual buckets
 type Options struct {
 	// MaxSkew defines how much a key may be shifted in case of duplicates.
 	// This can lead to very small inaccuracies. Zero disables this.
@@ -96,11 +97,11 @@ func Open(dir string, opts Options) (*Bucket, error) {
 	}, nil
 }
 
-func (b *Bucket) Sync() error {
+func (b *Bucket) Sync(force bool) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	return errors.Join(b.log.Sync(), b.idxLog.Sync())
+	return errors.Join(b.log.Sync(force), b.idxLog.Sync(force))
 }
 
 func (b *Bucket) Close() error {
@@ -108,8 +109,8 @@ func (b *Bucket) Close() error {
 	defer b.mu.Unlock()
 
 	return errors.Join(
-		b.log.Sync(),
-		b.idxLog.Sync(),
+		b.log.Sync(true),
+		b.idxLog.Sync(true),
 		b.log.Close(),
 		b.idxLog.Close(),
 	)
@@ -121,8 +122,9 @@ func (b *Bucket) Push(items []item.Item) error {
 		return nil
 	}
 
-	b.mu.Lock()
 	// TODO: locking would only be needed when modifying the index?
+	//       all attributes of bucket itself are not modified after Open.
+	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	loc, err := b.log.Push(items)
@@ -244,7 +246,7 @@ func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, int, error) {
 		}
 	}
 
-	return dst, numAppends, b.idxLog.Sync()
+	return dst, numAppends, b.idxLog.Sync(false)
 }
 
 func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
@@ -293,7 +295,7 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 		}
 	}
 
-	return numDeleted, b.idxLog.Sync()
+	return numDeleted, b.idxLog.Sync(false)
 }
 
 func (b *Bucket) Empty() bool {
@@ -317,7 +319,6 @@ func (b *Bucket) Size() int {
 	size := 0
 	iter := b.idx.Iter()
 	for iter.Next() {
-		fmt.Println(iter.Value())
 		size += int(iter.Value().Len)
 	}
 
