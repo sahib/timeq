@@ -1,26 +1,14 @@
 package vlog
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/sahib/timeq/item"
+	"github.com/sahib/timeq/item/testutils"
 	"github.com/stretchr/testify/require"
 )
-
-func genItems(start, stop, step int) []item.Item {
-	var its []item.Item
-	for idx := start; idx < stop; idx += step {
-		its = append(its, item.Item{
-			Key:  item.Key(idx),
-			Blob: []byte(fmt.Sprintf("%d", idx)),
-		})
-	}
-
-	return its
-}
 
 func TestOpenUnaligned(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "timeq-vlogtest")
@@ -59,7 +47,7 @@ func TestOpenPushRead(t *testing.T) {
 	log, err := Open(filepath.Join(tmpDir, "log"), true)
 	require.NoError(t, err)
 
-	loc, err := log.Push(genItems(1, 2, 1))
+	loc, err := log.Push(testutils.GenItems(1, 2, 1))
 	require.NoError(t, err)
 	require.Equal(t, loc, item.Location{
 		Key: 1,

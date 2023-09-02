@@ -25,6 +25,10 @@ type Options struct {
 	// The provided function should clamp the key value to
 	// a common value. Each same value that was returned goes
 	// into the same bucket.
+	//
+	// NOTE: This may not be changed after you opened a queue with it!
+	//       Only way to change is to create a new queue and shovel the
+	//       old data into it.
 	BucketFunc func(Key) Key
 }
 
@@ -165,6 +169,18 @@ func (q *Queue) Sync() error {
 	return q.buckets.Iter(func(b *bucket.Bucket) error {
 		return b.Sync()
 	})
+}
+
+func (q *Queue) Clear() error {
+	return q.buckets.Iter(func(b *bucket.Bucket) error {
+		// TODO: Can we iterate and delete?
+		return q.buckets.Delete(b.Key())
+	})
+}
+
+func (q *Queue) Shovel(src *Queue) error {
+	// TODO: Shovel
+	return nil
 }
 
 func (q *Queue) Close() error {

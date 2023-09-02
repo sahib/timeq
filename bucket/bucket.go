@@ -2,6 +2,7 @@ package bucket
 
 import (
 	"container/heap"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/sahib/timeq/index"
 	"github.com/sahib/timeq/item"
 	"github.com/sahib/timeq/vlog"
+	"github.com/tidwall/btree"
 	"golang.org/x/exp/slog"
 )
 
@@ -95,31 +97,32 @@ func Open(dir string, opts Options) (*Bucket, error) {
 }
 
 func (b *Bucket) Sync() error {
-	if err := b.log.Sync(); err != nil {
-		return err
-	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
-	if err := b.idxLog.Sync(); err != nil {
-		return err
-	}
-
-	return nil
+	return errors.Join(b.log.Sync(), b.idxLog.Sync())
 }
 
 func (b *Bucket) Close() error {
-	if err := b.log.Close(); err != nil {
-		return err
-	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
-	if err := b.idxLog.Close(); err != nil {
-		return err
-	}
-
-	return nil
+	return errors.Join(
+		b.log.Sync(),
+		b.idxLog.Sync(),
+		b.log.Close(),
+		b.idxLog.Close(),
+	)
 }
 
+// Push expects pre-sorted items!
 func (b *Bucket) Push(items []item.Item) error {
+	if len(items) == 0 {
+		return nil
+	}
+
 	b.mu.Lock()
+	// TODO: locking would only be needed when modifying the index?
 	defer b.mu.Unlock()
 
 	loc, err := b.log.Push(items)
@@ -141,91 +144,103 @@ func (b *Bucket) Push(items []item.Item) error {
 	return nil
 }
 
+// addPopIter adds a new batchIter to `batchIters` and advances the idxIter.
+func (b *Bucket) addPopIter(batchIters *vlog.LogIters, idxIter *btree.MapIter[item.Key, item.Location]) (bool, error) {
+	loc := idxIter.Value()
+	batchIter := b.log.At(loc)
+	if !batchIter.Next(nil) {
+		// might be empty or I/O error:
+		return false, batchIter.Err()
+	}
+
+	heap.Push(batchIters, batchIter)
+	if !idxIter.Next() {
+		return true, nil
+	}
+
+	return false, nil
+}
+
 func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, int, error) {
 	if n <= 0 {
 		// technically that's a valid usecase.
-		return nil, 0, nil
+		return dst, 0, nil
 	}
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Check how many index entries we have to iterate until we can fill up
-	// `dst` with `n` items. Alternatively, all of them have to be used.
-	iter := b.idx.Iter()
-	minEntriesNeeded := 0
-	for count := 0; count < n && iter.Next(); count += int(iter.Value().Len) {
-		minEntriesNeeded++
+	// Fetch the lowest entry of the index:
+	idxIter := b.idx.Iter()
+	if !idxIter.Next() {
+		// The index is empty. Nothing to pop.
+		return dst, 0, nil
 	}
 
-	// Figure out what the highest key (excluding) of the index is that
-	// we don't need anymore.
-	var highestKey item.Key
-	if iter.Next() {
-		highestKey = iter.Value().Key
-	} else {
-		// iterator is at the end of index,
-		// we have to take all of it. Use int64 max value.
-		highestKey = item.Key((^int64(0)) >> 1)
-	}
-
-	// Collect all wal iterators that we need to fetch all keys.
-	batchIters := make(vlog.LogIters, 0, minEntriesNeeded)
-	for iter := b.idx.Iter(); iter.Next(); {
-		loc := iter.Value()
-		if loc.Key >= highestKey {
-			break
-		}
-
-		batchIter := b.log.At(loc)
-		batchIter.Next(nil)
-		if err := batchIter.Err(); err != nil {
-			// some error on read.
-			return nil, 0, err
-		}
-
-		batchIters = append(batchIters, batchIter)
+	// initialize with first batch iter:
+	batchItersSlice := make(vlog.LogIters, 0, 1)
+	batchIters := &batchItersSlice
+	indexExhausted, err := b.addPopIter(batchIters, &idxIter)
+	if err != nil {
+		return dst, 0, err
 	}
 
 	// Choose the lowest item of all iterators here and make sure the next loop
 	// iteration will yield the next highest key.
-	numAppends := 0
-	heap.Init(batchIters)
-	for len(dst) < n && !batchIters[0].Exhausted() {
-		dst = append(dst, batchIters[0].Item())
+	var numAppends int
+	for numAppends < n && !(*batchIters)[0].Exhausted() {
+		batchItem := (*batchIters)[0].Item()
+		dst = append(dst, batchItem)
 		numAppends++
 
-		batchIters[0].Next(nil)
-		if err := batchIters[0].Err(); err != nil {
-			return nil, 0, err
+		// advance current batch iter. We will make sure at the
+		// end of the loop that the currently first one gets sorted
+		// correctly if it turns out to be out-of-order.
+		var nextItem item.Item
+		(*batchIters)[0].Next(&nextItem)
+		if err := (*batchIters)[0].Err(); err != nil {
+			return dst, 0, err
 		}
 
+		// index batch entries might be overlapping. We need to check if the
+		// next entry in the index needs to be taken into account for the next
+		// iteration. For this we compare the next index entry to the
+		// supposedly next batch value.
+		if !indexExhausted {
+			nextLoc := idxIter.Value()
+			if (*batchIters)[0].Exhausted() || nextLoc.Key <= nextItem.Key {
+				indexExhausted, err = b.addPopIter(batchIters, &idxIter)
+				if err != nil {
+					return dst, 0, err
+				}
+			}
+		}
+
+		// Repair sorting of the heap as we changed the value of the first iter.
 		heap.Fix(batchIters, 0)
 	}
 
 	// NOTE: In theory we could also use fallocate(FALLOC_FL_ZERO_RANGE) on
 	// ext4 to "put holes" into the log file where we read batches from to save
 	// some space early. This would make sense only for very big buckets
-	// though. We delete the whole bucket once it was completely exhausted
-	// anyways.
+	// though. We delete the bucket once it was completely exhausted anyways.
 
-	// Now since we've collected all data we need to delete
-	for _, batchIter := range batchIters {
+	// Now since we've collected all data we need to remember what we consumed.
+	for _, batchIter := range *batchIters {
+		b.idx.Delete(batchIter.Key())
+
 		currLoc := batchIter.CurrentLocation()
 		if batchIter.Exhausted() {
 			// this batch was fullly exhausted during Pop()
-			b.idx.Delete(batchIter.Key())
-
 			currLoc.Len = 0
-			if err := b.idxLog.Push(currLoc); err != nil {
-				return nil, 0, fmt.Errorf("idxlog: append delete: %w", err)
-			}
 		} else {
 			// some keys were take from it, but not all (or none)
+			// we need to adjust the index to keep those reachable.
 			b.idx.Set(currLoc.Key, currLoc)
-			if err := b.idxLog.Push(currLoc); err != nil {
-				return nil, 0, fmt.Errorf("idxlog: append begun: %w", err)
-			}
+		}
+
+		if err := b.idxLog.Push(currLoc); err != nil {
+			return dst, 0, fmt.Errorf("idxlog: append begun: %w", err)
 		}
 	}
 
@@ -302,6 +317,7 @@ func (b *Bucket) Size() int {
 	size := 0
 	iter := b.idx.Iter()
 	for iter.Next() {
+		fmt.Println(iter.Value())
 		size += int(iter.Value().Len)
 	}
 

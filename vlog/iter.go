@@ -7,13 +7,13 @@ import (
 // TODO: I don't really like the API here. That iter is too fat.
 
 type LogIter struct {
-	key       item.Key
-	currOff   item.Off
-	currLen   item.Off
-	item      item.Item
-	exhausted bool
-	log       *Log
-	err       error
+	key              item.Key
+	currOff, currLen item.Off
+	prevOff, prevLen item.Off
+	item             item.Item
+	exhausted        bool
+	log              *Log
+	err              error
 }
 
 func (li *LogIter) Next(itDst *item.Item) bool {
@@ -27,6 +27,9 @@ func (li *LogIter) Next(itDst *item.Item) bool {
 		li.exhausted = true
 		return false
 	}
+
+	li.prevOff = li.currOff
+	li.prevLen = li.currLen
 
 	// advance iter to next position:
 	li.currOff += item.Off(len(li.item.Blob) + itemHeaderSize)
@@ -49,15 +52,19 @@ func (li *LogIter) Key() item.Key {
 	return li.key
 }
 
+// Item returns the current item.
+// It is not valid before Next() has been called.
 func (li *LogIter) Item() item.Item {
 	return li.item
 }
 
+// CurrentLocation returns the location of the current entry.
+// It is not valid before Next() has been called.
 func (li *LogIter) CurrentLocation() item.Location {
 	return item.Location{
 		Key: li.item.Key,
-		Off: li.currOff,
-		Len: li.currLen,
+		Off: li.prevOff,
+		Len: li.prevLen,
 	}
 }
 
@@ -72,8 +79,6 @@ type LogIters []LogIter
 // Make LogIter usable by heap.Interface
 func (ls LogIters) Len() int      { return len(ls) }
 func (ls LogIters) Swap(i, j int) { ls[i], ls[j] = ls[j], ls[i] }
-func (ls LogIters) Push(x any)    {}
-func (ls LogIters) Pop() any      { return nil }
 func (ls LogIters) Less(i, j int) bool {
 	if ls[i].exhausted != ls[j].exhausted {
 		// sort exhausted iters to the back
@@ -81,4 +86,12 @@ func (ls LogIters) Less(i, j int) bool {
 	}
 
 	return ls[i].item.Key < ls[j].item.Key
+}
+func (ls *LogIters) Push(x any) { *ls = append(*ls, x.(LogIter)) }
+func (ls *LogIters) Pop() any {
+	old := *ls
+	n := len(old)
+	x := old[n-1]
+	*ls = old[0 : n-1]
+	return x
 }

@@ -4,3 +4,6 @@ build:
 
 lint:
 	golangci-lint run ./...
+
+test:
+	gotestsum ./...

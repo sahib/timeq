@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/sahib/timeq/item"
+	"github.com/sahib/timeq/item/testutils"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,10 +20,10 @@ func TestIter(t *testing.T) {
 	require.NoError(t, err)
 
 	// Push a few items before:
-	_, err = log.Push(genItems(0, 10, 1))
+	_, err = log.Push(testutils.GenItems(0, 10, 1))
 	require.NoError(t, err)
 
-	loc, err := log.Push(genItems(10, 20, 1))
+	loc, err := log.Push(testutils.GenItems(10, 20, 1))
 	require.NoError(t, err)
 	require.Equal(t, loc, item.Location{
 		Key: 10,
@@ -43,8 +44,8 @@ func TestIter(t *testing.T) {
 		currLoc := iter.CurrentLocation()
 		require.Equal(t, item.Location{
 			Key: item.Key(count + 10),
-			Off: item.Off(itemHeaderSize*10 + 10 + (count+1)*(itemHeaderSize+2)),
-			Len: item.Off(10 - 1 - count),
+			Off: item.Off(itemHeaderSize*10 + 10 + count*(itemHeaderSize+2)),
+			Len: item.Off(10 - count),
 		}, currLoc)
 		count++
 	}

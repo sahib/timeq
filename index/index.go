@@ -13,7 +13,8 @@ type Index struct {
 }
 
 func Load(path string) (*Index, error) {
-	fd, err := os.Open(path)
+	flags := os.O_CREATE | os.O_RDONLY
+	fd, err := os.OpenFile(path, flags, 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -22,8 +23,8 @@ func Load(path string) (*Index, error) {
 
 	rdr := NewReader(fd)
 
-	var loc item.Location
 	var index Index
+	var loc item.Location
 	for rdr.Next(&loc) {
 		if loc.Len == 0 {
 			// len=0 means that the batch was fully consumed.
