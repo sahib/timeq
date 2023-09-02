@@ -1,6 +1,7 @@
 # ``timeq``
 
 [![GoDoc](https://godoc.org/github.com/sahib/timeq?status.svg)](https://godoc.org/github.com/sahib/timeq)
+![Build status](https://github.com/sahib/timeq/actions/workflows/go.yml/badge.svg)
 
 A time-based persistent priority queue in Go.
 
