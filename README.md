@@ -10,7 +10,7 @@ A time-based persistent priority queue in Go.
 
 ## Features
 
-- Clean and well test code base.
+- Clean and well test code base based on Go 1.21.
 - Configurable durability behavior.
 - High (enough) throughput.
 - Small memory footprint.
@@ -27,6 +27,7 @@ assumption for optimal performance:
 - You only want to store one value per key (see [FAQ](#FAQ)).
 - You push and pop your data in batches.
 - File storage is not a primary concern (i.e. no compression implemented).
+- You trust your data durability to some random duded on the internet (don't we all?).
 
 If some of those assumptions do not fit your usecase and you still managed to make it work,
 I would be happy for some feedback or even pull requests to improve the general usability.
@@ -52,7 +53,7 @@ We also ship a very minimal command-line client that can be used for experiments
 You can install it like this:
 
 ```bash
-$ go install github.com/sahib/timeq@latest
+$ go install github.com/sahib/timeq/cmd@latest
 ```
 
 ## Design

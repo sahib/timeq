@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -132,8 +133,18 @@ func Run(args []string) error {
 			Action:  withQueue(handleClear),
 			Flags: []cli.Flag{
 				cli.IntFlag{
-					Name:     "u,until",
-					Usage:    "Until what key to delete",
+					Name:  "u,until",
+					Usage: "Until what key to delete",
+				},
+			},
+		}, {
+			Name:   "shovel",
+			Usage:  "Move the data to another queue",
+			Action: withQueue(handleShovel),
+			Flags: []cli.Flag{
+				cli.IntFlag{
+					Name:     "d,dest",
+					Usage:    "Directory of the destination queue",
 					Required: true,
 				},
 			},
@@ -187,6 +198,16 @@ func handleSize(ctx *cli.Context, q *timeq.Queue) error {
 }
 
 func handleClear(ctx *cli.Context, q *timeq.Queue) error {
+	if !ctx.IsSet("until") {
+		size := q.Size()
+		if err := q.Clear(); err != nil {
+			return err
+		}
+
+		fmt.Printf("deleted all %v items\n", size)
+		return nil
+	}
+
 	deleted, err := q.DeleteLowerThan(timeq.Key(ctx.Int("until")))
 	if err != nil {
 		return err
@@ -194,4 +215,26 @@ func handleClear(ctx *cli.Context, q *timeq.Queue) error {
 
 	fmt.Printf("deleted %v items\n", deleted)
 	return nil
+}
+
+func handleShovel(ctx *cli.Context, srcQueue *timeq.Queue) error {
+	dstDir := ctx.String("dest")
+
+	dstOpts, err := optionsFromCtx(ctx)
+	if err != nil {
+		return err
+	}
+
+	dstQueue, err := timeq.Open(dstDir, dstOpts)
+	if err != nil {
+		return err
+	}
+
+	nShoveled, err := timeq.Shovel(srcQueue, dstQueue)
+	if err != nil {
+		return errors.Join(err, dstQueue.Close())
+	}
+
+	fmt.Printf("moved %d items\n", nShoveled)
+	return dstQueue.Close()
 }

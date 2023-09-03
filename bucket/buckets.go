@@ -40,6 +40,7 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 	return &Buckets{
 		dir:  dir,
 		tree: tree,
+		opts: opts,
 	}, nil
 }
 

@@ -84,7 +84,7 @@ func (q *Queue) Push(items Items) error {
 	var lastKeyIdx int
 	for idx := 0; idx < len(items); idx++ {
 		keyMod := q.opts.BucketFunc(items[idx].Key)
-		if keyMod == lastKeyMod {
+		if keyMod == lastKeyMod && idx != len(items)-1 {
 			continue
 		}
 
@@ -93,7 +93,12 @@ func (q *Queue) Push(items Items) error {
 			return err
 		}
 
-		if err := buck.Push(items[lastKeyIdx:idx]); err != nil {
+		lastElemIdx := idx
+		if idx == len(items)-1 {
+			lastElemIdx = len(items)
+		}
+
+		if err := buck.Push(items[lastKeyIdx:lastElemIdx]); err != nil {
 			return err
 		}
 
