@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // Key is a priority key in the queue. It has to be unique
@@ -13,6 +14,7 @@ type Key int64
 
 // KeyFromString is the reverse of String()
 func KeyFromString(s string) (Key, error) {
+	s = strings.TrimPrefix(s, "K")
 	key, err := strconv.ParseInt(filepath.Base(s), 16, 64)
 	if err != nil {
 		return 0, err
@@ -22,7 +24,7 @@ func KeyFromString(s string) (Key, error) {
 }
 
 func (k Key) String() string {
-	return fmt.Sprintf("%08X", int64(k))
+	return fmt.Sprintf("K%08X", int64(k))
 }
 
 type Off uint32
@@ -33,7 +35,7 @@ type Item struct {
 }
 
 func (i Item) String() string {
-	return fmt.Sprintf("%d:%s", i.Key, i.Blob)
+	return fmt.Sprintf("%s:%s", i.Key, i.Blob)
 }
 
 func (i *Item) Copy() Item {
@@ -59,5 +61,5 @@ type Location struct {
 }
 
 func (l Location) String() string {
-	return fmt.Sprintf("[key=%d, off=%d, len=%d]", l.Key, l.Off, l.Len)
+	return fmt.Sprintf("[key=%s, off=%d, len=%d]", l.Key, l.Off, l.Len)
 }

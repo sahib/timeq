@@ -21,7 +21,7 @@ type Key = item.Key
 // DefaultBucketFunc assumes that `key` is a nanosecond unix timestamps
 // and divides data (roughly) in 15 minute buckets.
 func DefaultBucketFunc(key Key) Key {
-	// This should yield roughly 15m buckets.
+	// This should yield roughly 9m buckets for nanosecond timestamps.
 	// (and saves us expensive divisions)
 	return key & (^item.Key(0) << 39)
 }
@@ -88,7 +88,7 @@ func (q *Queue) Push(items Items) error {
 			continue
 		}
 
-		buck, err := q.buckets.ByKey(keyMod)
+		buck, err := q.buckets.ForKey(keyMod)
 		if err != nil {
 			return err
 		}
@@ -143,7 +143,6 @@ func (q *Queue) Pop(n int, dst Items) (Items, error) {
 		return nil, err
 	}
 
-	// Delete buckets that were exhausted:
 	for _, bucket := range toBeDeleted {
 		if err := q.buckets.Delete(bucket.Key()); err != nil {
 			return dst, fmt.Errorf("bucket delete: %w", err)
@@ -185,46 +184,28 @@ func (q *Queue) DeleteLowerThan(key Key) (int, error) {
 	return numDeleted, nil
 }
 
-// Size returns the number of items in the queue.
+// Len returns the number of items in the queue.
 // NOTE: This is a little more expensive than a simple getter.
 // You should avoid calling this in a hot loop.
-func (q *Queue) Size() int {
-	var size int
-	_ = q.buckets.Iter(func(b *bucket.Bucket) error {
-		size += b.Size()
-		return nil
-	})
-
-	return size
+func (q *Queue) Len() int {
+	return q.buckets.Len()
 }
 
 // Sync can be called to explicitly sync the queue contents
 // to persistent storage, even if you configured SyncNone.
 func (q *Queue) Sync() error {
-	return q.buckets.Iter(func(b *bucket.Bucket) error {
-		return b.Sync(true)
-	})
+	return q.buckets.Sync()
 }
 
 func (q *Queue) Clear() error {
-	return q.buckets.Iter(func(b *bucket.Bucket) error {
-		// TODO: Can we iterate and delete?
-		return q.buckets.Delete(b.Key())
-	})
-}
-
-func (q *Queue) Shovel(src *Queue) error {
-	// TODO: Shovel
-	return nil
+	return q.buckets.Clear()
 }
 
 // Close should always be called and error checked when you're done
 // with using the queue. Close might still flush out some data, depending
 // on what sync mode you configured.
 func (q *Queue) Close() error {
-	return q.buckets.Iter(func(b *bucket.Bucket) error {
-		return b.Close()
-	})
+	return q.buckets.Close()
 }
 
 // Shovel moves items from `src` to `dst`. The `src` queue will be completely drained

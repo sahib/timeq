@@ -122,10 +122,10 @@ func Run(args []string) error {
 			Usage:  "Set one or a several key-value pairs",
 			Action: withQueue(handlePush),
 		}, {
-			Name:    "size",
-			Aliases: []string{"s"},
+			Name:    "len",
+			Aliases: []string{"l"},
 			Usage:   "Print the number of items in the queue",
-			Action:  withQueue(handleSize),
+			Action:  withQueue(handleLen),
 		}, {
 			Name:    "clear",
 			Aliases: []string{"c"},
@@ -192,14 +192,14 @@ func handlePop(ctx *cli.Context, q *timeq.Queue) error {
 	return nil
 }
 
-func handleSize(ctx *cli.Context, q *timeq.Queue) error {
-	fmt.Println(q.Size())
+func handleLen(ctx *cli.Context, q *timeq.Queue) error {
+	fmt.Println(q.Len())
 	return nil
 }
 
 func handleClear(ctx *cli.Context, q *timeq.Queue) error {
 	if !ctx.IsSet("until") {
-		size := q.Size()
+		size := q.Len()
 		if err := q.Clear(); err != nil {
 			return err
 		}

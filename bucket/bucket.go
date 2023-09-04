@@ -258,6 +258,7 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 		return 0, nil
 	}
 
+	var deleteEntries []item.Key
 	var numDeleted int
 	for iter := b.idx.Iter(); iter.Next(); {
 		loc := iter.Value()
@@ -281,7 +282,7 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 		if partialFound {
 			// we found an enrty in the log that is >= key.
 			// resize the index entry to skip the entries before.
-			b.idx.Set(loc.Key, item.Location{
+			b.idx.Set(partialItem.Key, item.Location{
 				Key: partialItem.Key,
 				Off: partialLoc.Off,
 				Len: partialLoc.Len,
@@ -289,10 +290,14 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 			numDeleted += int(loc.Len - partialLoc.Len)
 		} else {
 			// nothing found, this index entry can be dropped.
-			// TODO: can we do that while iterating?
-			b.idx.Delete(loc.Key)
 			numDeleted += int(loc.Len)
 		}
+
+		deleteEntries = append(deleteEntries, loc.Key)
+	}
+
+	for _, key := range deleteEntries {
+		b.idx.Delete(key)
 	}
 
 	return numDeleted, b.idxLog.Sync(false)
@@ -312,7 +317,7 @@ func (b *Bucket) Key() item.Key {
 	return b.key
 }
 
-func (b *Bucket) Size() int {
+func (b *Bucket) Len() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 

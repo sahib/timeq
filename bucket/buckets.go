@@ -2,6 +2,7 @@ package bucket
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -18,9 +19,13 @@ type Buckets struct {
 }
 
 func LoadAll(dir string, opts Options) (*Buckets, error) {
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, fmt.Errorf("mkdir: %w", err)
+	}
+
 	ents, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read-dir: %w", err)
 	}
 
 	tree := btree.Map[item.Key, *Bucket]{}
@@ -29,12 +34,13 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 			continue
 		}
 
-		bucket, err := Open(ent.Name(), opts)
+		key, err := item.KeyFromString(filepath.Base(ent.Name()))
 		if err != nil {
 			return nil, err
 		}
 
-		tree.Set(bucket.key, bucket)
+		// nil entries indicate buckets that were not loaded yet:
+		tree.Set(key, nil)
 	}
 
 	return &Buckets{
@@ -48,15 +54,21 @@ func (bs *Buckets) buckPath(key item.Key) string {
 	return filepath.Join(bs.dir, key.String())
 }
 
-func (bs *Buckets) ByKey(key item.Key) (*Bucket, error) {
+// ForKey returns a bucket for the specified key and creates if not there yet.
+// `key` must be the lowest key that is stored in this bucket. You cannot just
+// use a key that is somewhere in the bucket.
+func (bs *Buckets) ForKey(key item.Key) (*Bucket, error) {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 
-	if b, ok := bs.tree.Get(key); ok {
-		return b, nil
+	buck, _ := bs.tree.Get(key)
+	if buck != nil {
+		// fast path:
+		return buck, nil
 	}
 
-	buck, err := Open(bs.buckPath(key), bs.opts)
+	var err error
+	buck, err = Open(bs.buckPath(key), bs.opts)
 	if err != nil {
 		return nil, err
 	}
@@ -69,6 +81,10 @@ func (bs *Buckets) Delete(key item.Key) error {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 
+	return bs.delete(key)
+}
+
+func (bs *Buckets) delete(key item.Key) error {
 	bs.tree.Delete(key)
 	return os.RemoveAll(bs.buckPath(key))
 }
@@ -83,6 +99,15 @@ func (bs *Buckets) Iter(fn func(b *Bucket) error) error {
 
 	var err error
 	bs.tree.Scan(func(key item.Key, buck *Bucket) bool {
+		if buck == nil {
+			// not yet loaded bucket:
+			var buckErr error
+			buck, buckErr = Open(bs.buckPath(key), bs.opts)
+			if buckErr != nil {
+				err = buckErr
+			}
+		}
+
 		if err = fn(buck); err != nil {
 			if err == IterStop {
 				err = nil
@@ -93,4 +118,50 @@ func (bs *Buckets) Iter(fn func(b *Bucket) error) error {
 		return true
 	})
 	return err
+}
+
+func (bs *Buckets) Sync() error {
+	var err error
+	_ = bs.Iter(func(b *Bucket) error {
+		// try to sync as much as possible:
+		err = errors.Join(err, bs.Sync())
+		return nil
+	})
+
+	return err
+}
+
+func (bs *Buckets) Clear() error {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+
+	keys := []item.Key{}
+	bs.tree.Scan(func(key item.Key, _ *Bucket) bool {
+		keys = append(keys, key)
+		return true
+	})
+
+	for _, key := range keys {
+		if err := bs.delete(key); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (bs *Buckets) Close() error {
+	return bs.Iter(func(b *Bucket) error {
+		return b.Close()
+	})
+}
+
+func (bs *Buckets) Len() int {
+	var len int
+	_ = bs.Iter(func(b *Bucket) error {
+		len += b.Len()
+		return nil
+	})
+
+	return len
 }

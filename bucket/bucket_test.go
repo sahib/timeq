@@ -30,7 +30,7 @@ func withEmptyBucket(t *testing.T, fn func(b *Bucket)) {
 func TestBucketOpenEmpty(t *testing.T) {
 	withEmptyBucket(t, func(bucket *Bucket) {
 		require.True(t, bucket.Empty())
-		require.Equal(t, 0, bucket.Size())
+		require.Equal(t, 0, bucket.Len())
 	})
 }
 
@@ -165,26 +165,48 @@ func TestBucketPopLarge(t *testing.T) {
 	})
 }
 
-func TestBucketSize(t *testing.T) {
+func TestBucketLen(t *testing.T) {
 	withEmptyBucket(t, func(bucket *Bucket) {
-		require.Equal(t, 0, bucket.Size())
+		require.Equal(t, 0, bucket.Len())
 		require.True(t, bucket.Empty())
 
 		expItems := testutils.GenItems(0, 10, 1)
 		require.NoError(t, bucket.Push(expItems))
-		require.Equal(t, 10, bucket.Size())
+		require.Equal(t, 10, bucket.Len())
 		require.False(t, bucket.Empty())
 
 		_, _, err := bucket.Pop(5, nil)
 		require.NoError(t, err)
-		require.Equal(t, 5, bucket.Size())
+		require.Equal(t, 5, bucket.Len())
 		require.False(t, bucket.Empty())
 
 		_, _, err = bucket.Pop(5, nil)
 		require.NoError(t, err)
 		require.True(t, bucket.Empty())
-		require.Equal(t, 0, bucket.Size())
+		require.Equal(t, 0, bucket.Len())
 	})
+}
+
+func TestBucketDeleteLowerThan(t *testing.T) {
+	withEmptyBucket(t, func(bucket *Bucket) {
+		require.Equal(t, 0, bucket.Len())
+		require.True(t, bucket.Empty())
+
+		expItems := testutils.GenItems(0, 100, 1)
+		require.NoError(t, bucket.Push(expItems))
+		require.Equal(t, 100, bucket.Len())
+
+		deleted, err := bucket.DeleteLowerThan(50)
+		require.NoError(t, err)
+		require.Equal(t, 50, deleted)
+		require.False(t, bucket.Empty())
+
+		deleted, err = bucket.DeleteLowerThan(150)
+		require.NoError(t, err)
+		require.Equal(t, 50, deleted)
+		require.True(t, bucket.Empty())
+	})
+
 }
 
 func benchmarkPushPopWithSyncMode(b *testing.B, syncMode SyncMode) {
