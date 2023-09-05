@@ -22,6 +22,12 @@ func (li *LogIter) Next(itDst *item.Item) bool {
 		return false
 	}
 
+	if li.currOff >= item.Off(li.log.size) {
+		// stop iterating when end of log reached.
+		li.exhausted = true
+		return false
+	}
+
 	if err := li.log.readItemAt(li.currOff, &li.item); err != nil {
 		li.err = err
 		li.exhausted = true

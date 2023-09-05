@@ -22,13 +22,13 @@ func TestItemCopy(t *testing.T) {
 }
 
 func TestKeyFromString(t *testing.T) {
-	ff, err := KeyFromString("FF")
+	ff, err := KeyFromString("99")
 	require.NoError(t, err)
-	require.Equal(t, Key(255), ff)
+	require.Equal(t, Key(99), ff)
 
-	ff, err = KeyFromString("K00000FF")
+	ff, err = KeyFromString("K0000099")
 	require.NoError(t, err)
-	require.Equal(t, Key(255), ff)
+	require.Equal(t, Key(99), ff)
 
 	_, err = KeyFromString("ZZ")
 	require.Error(t, err)

@@ -7,8 +7,16 @@ import (
 	"os"
 
 	"github.com/sahib/timeq/item"
+	"github.com/tidwall/btree"
 	"golang.org/x/sys/unix"
 )
+
+// TODO: Think about making the disk format more failproof. Ideas:
+// - Add a block with magic number every N items so iter can seek to it
+//   in case of errors.
+// - Iters should automatically skip bad items.
+// - Checksums?
+// - Solomon Reed?
 
 const itemHeaderSize = 12
 
@@ -144,6 +152,58 @@ func (l *Log) readItemAt(off item.Off, it *item.Item) error {
 	}
 
 	return nil
+}
+
+// GenerateIndex produces an index from the data in the value log.
+// It's main use is to re-generate the index in case the index file
+// is damaged or broken in some way. The resulting index is likely
+// not the same as before, but probably a bit cleaner.
+func (l *Log) GenerateIndex() (*btree.Map[item.Key, item.Location], error) {
+	iter := LogIter{
+		// we're cheating a little here by trusting the iterator
+		// to go not over the end, even if the Len is bogus.
+		currOff: 0,
+		currLen: ^item.Off(0),
+		log:     l,
+	}
+
+	var tree btree.Map[item.Key, item.Location]
+	var it item.Item
+	var prevLoc item.Location
+	var lastLoc item.Location
+	var isInitialItem bool = true
+
+	// Go over the data and try to find runs of data that are sorted in
+	// ascending order. Each deviant item is the start of a new run.
+	for iter.Next(&it) {
+		if prevLoc.Key > it.Key {
+			tree.Set(lastLoc.Key, lastLoc)
+			lastLoc.Off = prevLoc.Off
+			lastLoc.Key = it.Key
+			lastLoc.Len = 0
+		}
+
+		lastLoc.Len++
+		if isInitialItem {
+			lastLoc.Key = it.Key
+			isInitialItem = false
+		}
+
+		prevLoc.Off += itemHeaderSize + item.Off(len(it.Blob))
+		prevLoc.Key = it.Key
+	}
+
+	if err := iter.Err(); err != nil {
+		return nil, err
+	}
+
+	// also pick up last run in the data:
+	if lastLoc.Len > 0 {
+		tree.Set(lastLoc.Key, lastLoc)
+	}
+
+	return &tree, nil
+
 }
 
 func (l *Log) Sync(force bool) error {

@@ -228,7 +228,6 @@ func benchmarkPushPopWithSyncMode(b *testing.B, syncMode SyncMode) {
 
 	b.ResetTimer()
 	for run := 0; run < b.N; run++ {
-		b.StopTimer()
 		for idx := 0; idx < len(items); idx++ {
 			// use a realistic size for each message:
 			var buf [40]byte
@@ -246,6 +245,7 @@ func benchmarkPushPopWithSyncMode(b *testing.B, syncMode SyncMode) {
 		b.StartTimer()
 		dstItems = dstItems[:0]
 		_, _, err := bucket.Pop(len(items), dstItems[:0])
+		b.StopTimer()
 		require.NoError(b, err)
 	}
 

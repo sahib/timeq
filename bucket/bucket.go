@@ -51,6 +51,7 @@ func DefaultOptions() Options {
 	}
 }
 
+// TODO: add slog logger?
 type Bucket struct {
 	mu     sync.Mutex
 	dir    string
@@ -74,7 +75,17 @@ func Open(dir string, opts Options) (*Bucket, error) {
 	idxPath := filepath.Join(dir, "idx.log")
 	idx, err := index.Load(idxPath)
 	if err != nil {
-		return nil, fmt.Errorf("index load: %w", err)
+		tree, genErr := log.GenerateIndex()
+		if err != nil {
+			// not much we can by now
+			return nil, fmt.Errorf("index load: %w (could not regen: %w)", err, genErr)
+		}
+
+		// continue with rebuild index, but remove broken one:
+		idx = &index.Index{Map: *tree}
+		if err := os.Remove(idxPath); err != nil {
+			return nil, fmt.Errorf("index failover: could not remove broken index: %w", err)
+		}
 	}
 
 	idxLog, err := index.NewWriter(idxPath, opts.SyncMode&SyncIndex > 0)

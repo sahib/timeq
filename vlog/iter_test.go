@@ -85,6 +85,7 @@ func TestIterInvalidLocation(t *testing.T) {
 
 	var it item.Item
 	require.False(t, iter.Next(&it))
-	require.Error(t, iter.Err())
+	require.True(t, iter.Exhausted())
+	require.NoError(t, iter.Err())
 	require.NoError(t, log.Close())
 }

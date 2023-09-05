@@ -15,7 +15,7 @@ type Key int64
 // KeyFromString is the reverse of String()
 func KeyFromString(s string) (Key, error) {
 	s = strings.TrimPrefix(s, "K")
-	key, err := strconv.ParseInt(filepath.Base(s), 16, 64)
+	key, err := strconv.ParseInt(filepath.Base(s), 10, 64)
 	if err != nil {
 		return 0, err
 	}
@@ -24,7 +24,9 @@ func KeyFromString(s string) (Key, error) {
 }
 
 func (k Key) String() string {
-	return fmt.Sprintf("K%08X", int64(k))
+	// keys are int64, so we need to pad with log10(2**63) at least
+	// to be sure that buckets are sorted on filesystem.
+	return fmt.Sprintf("K%020d", int64(k))
 }
 
 type Off uint32
