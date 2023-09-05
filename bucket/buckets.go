@@ -85,8 +85,19 @@ func (bs *Buckets) Delete(key item.Key) error {
 }
 
 func (bs *Buckets) delete(key item.Key) error {
+	buck, ok := bs.tree.Get(key)
+	if !ok {
+		return fmt.Errorf("no bucket with key %v", key)
+	}
+
+	// make sure to close the bucket, otherwise we ill accumulate mmaps, which
+	// will sooner or later lead to memory allocation issues/errors.
+	closeErr := buck.Close()
 	bs.tree.Delete(key)
-	return os.RemoveAll(bs.buckPath(key))
+	return errors.Join(
+		closeErr,
+		os.RemoveAll(bs.buckPath(key)),
+	)
 }
 
 // IterStop can be returned in Iter's func when you want to stop
@@ -164,4 +175,9 @@ func (bs *Buckets) Len() int {
 	})
 
 	return len
+}
+
+func (bs *Buckets) HighestBucketKey() item.Key {
+	key, _, _ := bs.tree.Max()
+	return key
 }

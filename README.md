@@ -31,7 +31,6 @@ assumption for optimal performance:
 
 If some of those assumptions do not fit your usecase and you still managed to make it work,
 I would be happy for some feedback or even pull requests to improve the general usability.
-
 ## Usecase
 
 My primary usecase was a embedded linux device that has different services that generate
@@ -56,6 +55,26 @@ You can install it like this:
 $ go install github.com/sahib/timeq/cmd@latest
 ```
 
+## Benchmarks
+
+The included benchmark pushes 2000 items with a payload of 40 byte per operation.
+
+```
+$ go test -bench=. -run=xxx
+goos: linux
+goarch: amd64
+pkg: github.com/sahib/timeq
+cpu: 12th Gen Intel(R) Core(TM) i7-1270P
+BenchmarkPopSyncNone-16      	  35194	    34097 ns/op
+BenchmarkPopSyncData-16      	  34605	    34611 ns/op
+BenchmarkPopSyncIndex-16     	  34854	    32888 ns/op
+BenchmarkPopSyncFull-16      	  36018	    42927 ns/op
+BenchmarkPushSyncNone-16     	  16256	    75892 ns/op
+BenchmarkPushSyncData-16     	  16182	    80836 ns/op
+BenchmarkPushSyncIndex-16    	  15744	    76501 ns/op
+BenchmarkPushSyncFull-16     	  16108	    76591 ns/op
+```
+
 ## Design
 
 * All data is divided into buckets by a user-defined function.
@@ -75,13 +94,29 @@ Only the index of buckets is loaded that were pushed to or popped from.
 
 ### Can timeq be also used with non-time based keys?
 
-There's no place where the key of an item is actually assumed to be timestamp.
-If you find a good way to sort your data into buckets, you should be good to go.
+There are no notable place where the key of an item is actually assumed to be
+timestamp, except for the default bucket func (which can be configured). If you
+find a good way to sort your data into buckets you should be good to go. Keep
+in mind that timestamps were the idea behind the original design, so your
+mileage may vary - always benchmark your individual usecase. You can modify one
+of the existing benchmarks to test your assumptions.
 
 ### Can I store more than one value per key?
 
-Yes, you can. This slows down the index a bit, so you should avoid it. That's
-also why this is called `timeq` as this was my primary usecase.
+Yes, you can. This slows pushing down a bit though, so you might want to avoid
+it. If you want to use priority keys that are in a very narrow range (thus many
+duplicates) then you can think about spreading the range a bit wider.
+
+For example: You have priority keys from zero to ten for the tasks in your job
+queue. Instead of using zero to ten as keys, you can add the job-id to the key
+and shift the priority: ``(prio << 32) | jobID``.
+
+### How failsafe is ``timeq``?
+
+Time will tell. I use it on a big fleet of embedded devices in the field
+without issue. Design wise, damaged index files can be regenerated from the
+data log. There's no error correction code applied in the data log and no
+checksums are currently written. If you need this, I'm happy if a PR comes in.
 
 ## License
 

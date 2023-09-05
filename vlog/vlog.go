@@ -83,12 +83,12 @@ func (l *Log) Push(items []item.Item) (item.Location, error) {
 	// extend the wal file to fit the new items:
 	newSize := l.size + int64(addSize)
 	if err := l.fd.Truncate(newSize); err != nil {
-		return item.Location{}, err
+		return item.Location{}, fmt.Errorf("truncate: %w", err)
 	}
 
 	m, err := unix.Mremap(l.mmap, int(newSize), unix.MREMAP_MAYMOVE)
 	if err != nil {
-		return item.Location{}, err
+		return item.Location{}, fmt.Errorf("remap: %w", err)
 	}
 
 	l.mmap = m
@@ -99,7 +99,11 @@ func (l *Log) Push(items []item.Item) (item.Location, error) {
 		l.size += int64(itemHeaderSize + len(items[i].Blob))
 	}
 
-	return loc, l.Sync(false)
+	if err := l.Sync(false); err != nil {
+		return item.Location{}, fmt.Errorf("sync: %w", err)
+	}
+
+	return loc, nil
 }
 
 func (l *Log) At(loc item.Location) LogIter {

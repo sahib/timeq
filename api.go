@@ -90,7 +90,7 @@ func (q *Queue) Push(items Items) error {
 
 		buck, err := q.buckets.ForKey(keyMod)
 		if err != nil {
-			return err
+			return fmt.Errorf("bucket: for-key: %w", err)
 		}
 
 		lastElemIdx := idx
@@ -99,7 +99,7 @@ func (q *Queue) Push(items Items) error {
 		}
 
 		if err := buck.Push(items[lastKeyIdx:lastElemIdx]); err != nil {
-			return err
+			return fmt.Errorf("bucket: push: %w", err)
 		}
 
 		lastKeyMod = keyMod
@@ -144,7 +144,19 @@ func (q *Queue) Pop(n int, dst Items) (Items, error) {
 	}
 
 	for _, bucket := range toBeDeleted {
-		if err := q.buckets.Delete(bucket.Key()); err != nil {
+		bucketKey := bucket.Key()
+		if bucketKey == q.buckets.HighestBucketKey() {
+			// Optimization for time-based workloads:
+			// For situations were the consumer is faster than the producer
+			// we create and delete a single bucket over and over.
+			//
+			// To avoid this, we can assume for time-based workloads that the
+			// highest bucket is the one that receives new pushes. We should
+			// keep that one around therefore.
+			continue
+		}
+
+		if err := q.buckets.Delete(bucketKey); err != nil {
 			return dst, fmt.Errorf("bucket delete: %w", err)
 		}
 	}
