@@ -125,3 +125,11 @@ Source code is available under the MIT [License](/LICENSE).
 ## Contact
 
 Chris Pahl [@sahib](https://github.com/sahib)
+
+## TODO List
+
+- [ ] Improve test coverage / extend test suite
+- [ ] Add fuzzing test for Push/Pop
+- [ ] Add way to run test as separate process that can be crashed randomly
+- [ ] Profile and optimize a bit more, if possible.
+- [ ] Use a configurable logger for warnings
