@@ -65,14 +65,14 @@ goos: linux
 goarch: amd64
 pkg: github.com/sahib/timeq
 cpu: 12th Gen Intel(R) Core(TM) i7-1270P
-BenchmarkPopSyncNone-16      	  35194	    34097 ns/op
-BenchmarkPopSyncData-16      	  34605	    34611 ns/op
-BenchmarkPopSyncIndex-16     	  34854	    32888 ns/op
-BenchmarkPopSyncFull-16      	  36018	    42927 ns/op
-BenchmarkPushSyncNone-16     	  16256	    75892 ns/op
-BenchmarkPushSyncData-16     	  16182	    80836 ns/op
-BenchmarkPushSyncIndex-16    	  15744	    76501 ns/op
-BenchmarkPushSyncFull-16     	  16108	    76591 ns/op
+BenchmarkPopSyncNone-16      	  35924	    33738 ns/op	    240 B/op	      5 allocs/op
+BenchmarkPopSyncData-16      	  35286	    33938 ns/op	    240 B/op	      5 allocs/op
+BenchmarkPopSyncIndex-16     	  34030	    34003 ns/op	    240 B/op	      5 allocs/op
+BenchmarkPopSyncFull-16      	  35170	    33592 ns/op	    240 B/op	      5 allocs/op
+BenchmarkPushSyncNone-16     	  18496	    64925 ns/op	     73 B/op	      2 allocs/op
+BenchmarkPushSyncData-16     	  13340	   102972 ns/op	     73 B/op	      2 allocs/op
+BenchmarkPushSyncIndex-16    	  13152	    84708 ns/op	     73 B/op	      2 allocs/op
+BenchmarkPushSyncFull-16     	  15430	    76081 ns/op	     73 B/op	      2 allocs/op
 ```
 
 ## Design
