@@ -19,3 +19,7 @@ func TestKeyTrunc(t *testing.T) {
 	require.Equal(t, trunc1, trunc2)
 	require.NotEqual(t, trunc1, trunc3)
 }
+
+func TestAPI(t *testing.T) {
+
+}

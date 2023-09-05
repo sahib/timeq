@@ -140,7 +140,7 @@ func (b *Bucket) Push(items []item.Item) error {
 
 	loc, err := b.log.Push(items)
 	if err != nil {
-		return err
+		return fmt.Errorf("push: log: %w", err)
 	}
 
 	maxSkew := int(b.opts.MaxSkew)
