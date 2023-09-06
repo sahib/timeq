@@ -70,3 +70,48 @@ func BenchmarkPushSyncNone(b *testing.B)  { benchmarkPushPopWithSyncMode(b, true
 func BenchmarkPushSyncData(b *testing.B)  { benchmarkPushPopWithSyncMode(b, true, bucket.SyncData) }
 func BenchmarkPushSyncIndex(b *testing.B) { benchmarkPushPopWithSyncMode(b, true, bucket.SyncIndex) }
 func BenchmarkPushSyncFull(b *testing.B)  { benchmarkPushPopWithSyncMode(b, true, bucket.SyncFull) }
+
+var globItems Items
+
+func BenchmarkCopyItems(b *testing.B) {
+	items := make(Items, 2000)
+	for idx := 0; idx < len(items); idx++ {
+		// use a realistic size for each message:
+		var buf [40]byte
+		for pos := 0; pos < cap(buf); pos += 8 {
+			binary.BigEndian.PutUint64(buf[pos:], uint64(idx))
+		}
+
+		items[idx].Key = item.Key(idx)
+		items[idx].Blob = buf[:]
+	}
+
+	b.Run("copy-naive-with-alloc", func(b *testing.B) {
+		b.ResetTimer()
+		for run := 0; run < b.N; run++ {
+			globItems = items.Copy()
+		}
+	})
+
+	c := make(Items, 2000)
+	pseudoMmap := make([]byte, 2000*40)
+
+	b.Run("copy-with-pseudo-mmap", func(b *testing.B) {
+		b.ResetTimer()
+		for run := 0; run < b.N; run++ {
+			// global variable to stop the compiler
+			// from optimizing the call away:
+			// globItems = items.Copy()
+			off := 0
+			for idx := 0; idx < len(items); idx++ {
+
+				c[idx] = items[idx]
+				s := pseudoMmap[off : off+40]
+				copy(s, items[idx].Blob)
+				c[idx].Blob = s
+			}
+
+			globItems = c
+		}
+	})
+}

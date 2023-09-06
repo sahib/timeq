@@ -12,7 +12,7 @@ import (
 type Item = item.Item
 
 // Items is a list of items.
-type Items []Item
+type Items = item.Items
 
 // Key is the priority of each item in the queue.
 // Lower keys will be popped first.

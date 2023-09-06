@@ -65,3 +65,31 @@ type Location struct {
 func (l Location) String() string {
 	return fmt.Sprintf("[key=%s, off=%d, len=%d]", l.Key, l.Off, l.Len)
 }
+
+type Items []Item
+
+func (items Items) Copy() Items {
+	// This Copy() is allocation optimized, i.e. it first goes through the data
+	// and decides how much memory is required. Then that memory is allocated once
+	// instead of many times. It's about 50% faster than the straightforward way.
+
+	var bufSize int
+	for idx := 0; idx < len(items); idx++ {
+		bufSize += len(items[idx].Blob)
+	}
+
+	itemsCopy := make(Items, len(items))
+	copyBuf := make([]byte, bufSize)
+	for idx := 0; idx < len(items); idx++ {
+		blobCopy := copyBuf[:len(items[idx].Blob)]
+		copy(blobCopy, items[idx].Blob)
+		itemsCopy[idx] = Item{
+			Key:  items[idx].Key,
+			Blob: blobCopy,
+		}
+
+		copyBuf = copyBuf[len(blobCopy):]
+	}
+
+	return itemsCopy
+}
