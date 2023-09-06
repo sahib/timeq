@@ -7,3 +7,6 @@ lint:
 
 test:
 	gotestsum ./...
+
+bench:
+	go test -v -bench=. -run=xxx -benchmem -cpuprofile=cpu.pprof -memprofile=mem.pprof

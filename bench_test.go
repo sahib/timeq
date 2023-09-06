@@ -96,6 +96,8 @@ func BenchmarkCopyItems(b *testing.B) {
 	c := make(Items, 2000)
 	pseudoMmap := make([]byte, 2000*40)
 
+	// Difference to above bench: It does not allocate anything
+	// during the benchmark.
 	b.Run("copy-with-pseudo-mmap", func(b *testing.B) {
 		b.ResetTimer()
 		for run := 0; run < b.N; run++ {
@@ -112,6 +114,25 @@ func BenchmarkCopyItems(b *testing.B) {
 			}
 
 			globItems = c
+		}
+	})
+}
+
+var globalKey Key
+
+func BenchmarkDefaultBucketFunc(b *testing.B) {
+	b.Run("default", func(b *testing.B) {
+		globalKey = 23
+		for run := 0; run < b.N; run++ {
+			globalKey = DefaultBucketFunc(globalKey)
+		}
+	})
+
+	b.Run("baseline", func(b *testing.B) {
+		globalKey = 23
+		const div = 9 * 60 * 1e9
+		for run := 0; run < b.N; run++ {
+			globalKey = (globalKey / div) * div
 		}
 	})
 }

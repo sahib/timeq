@@ -76,37 +76,48 @@ func Open(dir string, opts Options) (*Queue, error) {
 	}, nil
 }
 
+// binsplit returns the first index of `items` that would
+// not go to the bucket `comp`. Not to be called on empty slices.
+func (q *Queue) binsplit(items Items, comp Key) int {
+	if len(items) <= 1 {
+		return 1
+	}
+
+	pivotIdx := len(items) / 2
+	pivotKey := q.opts.BucketFunc(items[pivotIdx].Key)
+	if pivotKey != comp {
+		// search left:
+		return q.binsplit(items[:pivotIdx], comp)
+	}
+
+	// search right:
+	return pivotIdx + q.binsplit(items[pivotIdx:], comp)
+}
+
 // Push pushes a batch of `items` to the queue.
 func (q *Queue) Push(items Items) error {
+	if len(items) == 0 {
+		return nil
+	}
+
 	slices.SortFunc(items, func(i, j item.Item) int {
 		return int(i.Key - j.Key)
 	})
 
 	// Sort items into the respective buckets:
-	var lastKeyMod item.Key
-	var lastKeyIdx int
-	for idx := 0; idx < len(items); idx++ {
-		keyMod := q.opts.BucketFunc(items[idx].Key)
-		if keyMod == lastKeyMod && idx != len(items)-1 {
-			continue
-		}
-
+	for len(items) > 0 {
+		keyMod := q.opts.BucketFunc(items[0].Key)
 		buck, err := q.buckets.ForKey(keyMod)
 		if err != nil {
 			return fmt.Errorf("bucket: for-key: %w", err)
 		}
 
-		lastElemIdx := idx
-		if idx == len(items)-1 {
-			lastElemIdx = len(items)
-		}
-
-		if err := buck.Push(items[lastKeyIdx:lastElemIdx]); err != nil {
+		nextIdx := q.binsplit(items, keyMod)
+		if err := buck.Push(items[:nextIdx]); err != nil {
 			return fmt.Errorf("bucket: push: %w", err)
 		}
 
-		lastKeyMod = keyMod
-		lastKeyIdx = idx
+		items = items[nextIdx:]
 	}
 
 	return nil
@@ -115,7 +126,7 @@ func (q *Queue) Push(items Items) error {
 // Pop fetches up to `n` items from the queue. It will only return
 // less items if the queue does not hold more items. If an error
 // occured no items are returned. If n < 0 then as many items as possible
-// will be returned - this is not recommended.
+// will be returned - this is not recommended as we call it the YOLO mode.
 //
 // The `dst` argument can be used to pass a pre-allocated slice that
 // the queue appends to. This can be done to avoid allocations.
