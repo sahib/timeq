@@ -1,10 +1,13 @@
 package timeq
 
 import (
+	"os"
 	"testing"
 	"time"
 
+	"github.com/sahib/timeq/bucket"
 	"github.com/sahib/timeq/item"
+	"github.com/sahib/timeq/item/testutils"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,6 +23,45 @@ func TestKeyTrunc(t *testing.T) {
 	require.NotEqual(t, trunc1, trunc3)
 }
 
-func TestAPI(t *testing.T) {
+func TestAPIPushPopSeveralBuckets(t *testing.T) {
+	dir, err := os.MkdirTemp("", "timeq-bucketstest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
 
+	// Open queue with a bucket size of 10 items:
+	opts := Options{
+		Options: bucket.DefaultOptions(),
+		BucketFunc: func(key Key) Key {
+			return (key / 10) * 10
+		},
+	}
+
+	queue, err := Open(dir, opts)
+	require.NoError(t, err)
+
+	// Push two batches:
+	push1 := Items(testutils.GenItems(10, 20, 1))
+	push2 := Items(testutils.GenItems(30, 40, 1))
+	require.NoError(t, queue.Push(push1))
+	require.NoError(t, queue.Push(push2))
+	require.Equal(t, 20, queue.Len())
+
+	// Pop them in one go:
+	items, err := queue.Pop(-1, nil)
+	require.NoError(t, err)
+	require.Equal(t, 0, queue.Len())
+	require.Len(t, items, 20)
+	require.Equal(t, append(push1, push2...), items)
+
+	// Write the queue to disk:
+	require.NoError(t, queue.Sync())
+	require.NoError(t, queue.Close())
+
+	// Re-open to see if the items were permanently deleted:
+	reopened, err := Open(dir, opts)
+	require.NoError(t, err)
+	require.Equal(t, 0, reopened.Len())
+	items, err = reopened.Pop(-1, nil)
+	require.NoError(t, err)
+	require.Len(t, items, 0)
 }

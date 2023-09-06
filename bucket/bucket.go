@@ -245,6 +245,9 @@ func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, int, error) {
 		currLoc := batchIter.CurrentLocation()
 		if batchIter.Exhausted() {
 			// this batch was fullly exhausted during Pop()
+			// mark it as such in the index-wal.
+			currLoc.Key = batchIter.Key()
+			currLoc.Off = 0
 			currLoc.Len = 0
 		} else {
 			// some keys were take from it, but not all (or none)

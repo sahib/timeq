@@ -34,9 +34,27 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 			continue
 		}
 
-		key, err := item.KeyFromString(filepath.Base(ent.Name()))
+		buckPath := filepath.Join(dir, ent.Name())
+		key, err := item.KeyFromString(filepath.Base(buckPath))
 		if err != nil {
 			return nil, err
+		}
+
+		// TODO: streamline this code
+		buck, err := Open(buckPath, opts)
+		if err != nil {
+			return nil, err
+		}
+
+		isEmpty := buck.Empty()
+		if err := buck.Close(); err != nil {
+			// TODO: only log here?
+		}
+
+		if isEmpty {
+			if err := os.RemoveAll(buckPath); err != nil {
+				return nil, err
+			}
 		}
 
 		// nil entries indicate buckets that were not loaded yet:
@@ -90,12 +108,16 @@ func (bs *Buckets) delete(key item.Key) error {
 		return fmt.Errorf("no bucket with key %v", key)
 	}
 
-	// make sure to close the bucket, otherwise we ill accumulate mmaps, which
-	// will sooner or later lead to memory allocation issues/errors.
-	closeErr := buck.Close()
+	var err error
+	if buck != nil {
+		// make sure to close the bucket, otherwise we ill accumulate mmaps, which
+		// will sooner or later lead to memory allocation issues/errors.
+		err = buck.Close()
+	}
+
 	bs.tree.Delete(key)
 	return errors.Join(
-		closeErr,
+		err,
 		os.RemoveAll(bs.buckPath(key)),
 	)
 }
@@ -135,7 +157,7 @@ func (bs *Buckets) Sync() error {
 	var err error
 	_ = bs.Iter(func(b *Bucket) error {
 		// try to sync as much as possible:
-		err = errors.Join(err, bs.Sync())
+		err = errors.Join(err, b.Sync(true))
 		return nil
 	})
 
@@ -175,9 +197,4 @@ func (bs *Buckets) Len() int {
 	})
 
 	return len
-}
-
-func (bs *Buckets) HighestBucketKey() item.Key {
-	key, _, _ := bs.tree.Max()
-	return key
 }

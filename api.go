@@ -35,7 +35,10 @@ type Options struct {
 	// BucketFunc defines what key goes to what bucket.
 	// The provided function should clamp the key value to
 	// a common value. Each same value that was returned goes
-	// into the same bucket.
+	// into the same bucket. The returned value should be also
+	// the minimm key of the bucket.
+	//
+	// Example: '(key / 10) * 10' would produce buckets with 10 items.
 	//
 	// NOTE: This may not be changed after you opened a queue with it!
 	//       Only way to change is to create a new queue and shovel the
@@ -109,25 +112,35 @@ func (q *Queue) Push(items Items) error {
 	return nil
 }
 
-// Pop fetches up to `n` items from the queue.
-// It will only return less items if the queue does not hold more items.
-// If an error occured no items are returned.
+// Pop fetches up to `n` items from the queue. It will only return
+// less items if the queue does not hold more items. If an error
+// occured no items are returned. If n < 0 then as many items as possible
+// will be returned - this is not recommended.
 //
 // The `dst` argument can be used to pass a pre-allocated slice that
 // the queue appends to. This can be done to avoid allocations.
 // If you don't care you can also pass nil.
+//
+// You should immediately process the items and not store them
+// elsewhere. The reason is that the returned memory is a slice of a
+// memory-mapped file. Certain operations like Clear() will close
+// those mappings, causing segfaults when still accessing them. If you
+// need the items for later, then use item.Copy()
 func (q *Queue) Pop(n int, dst Items) (Items, error) {
-	var count = n
-	var toBeDeleted []*bucket.Bucket
+	if n < 0 {
+		// use max value in this case:
+		n = int(^uint(0) >> 1)
+	}
 
+	// NOTE: We can't check here if a bucket is empty and delete if
+	// afterwards. Otherwise the mmap would be closed and accessing
+	// items we returned can cause a segfault immediately.
+
+	var count = n
 	err := q.buckets.Iter(func(b *bucket.Bucket) error {
 		newDst, popped, err := b.Pop(count, dst)
 		if err != nil {
 			return err
-		}
-
-		if b.Empty() {
-			toBeDeleted = append(toBeDeleted, b)
 		}
 
 		dst = newDst
@@ -141,24 +154,6 @@ func (q *Queue) Pop(n int, dst Items) (Items, error) {
 
 	if err != nil {
 		return nil, err
-	}
-
-	for _, bucket := range toBeDeleted {
-		bucketKey := bucket.Key()
-		if bucketKey == q.buckets.HighestBucketKey() {
-			// Optimization for time-based workloads:
-			// For situations were the consumer is faster than the producer
-			// we create and delete a single bucket over and over.
-			//
-			// To avoid this, we can assume for time-based workloads that the
-			// highest bucket is the one that receives new pushes. We should
-			// keep that one around therefore.
-			continue
-		}
-
-		if err := q.buckets.Delete(bucketKey); err != nil {
-			return dst, fmt.Errorf("bucket delete: %w", err)
-		}
 	}
 
 	return dst, nil
