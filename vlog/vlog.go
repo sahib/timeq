@@ -27,6 +27,36 @@ type Log struct {
 	sync bool
 }
 
+func nextSize(size int64) int64 {
+	pageSize := int64(os.Getpagesize())
+	currPages := size / pageSize
+
+	// decide on how much to increase:
+	var shift int
+	var mb int64 = 1024 * 1024
+	switch {
+	default:
+		// 8 pages per block
+		shift = 3
+	case size > 200*1024:
+		// 16 pages per block
+		shift = 4
+	case size > (1 * mb):
+		// 32 pages per block
+		shift = 5
+	case size > (10 * mb):
+		// 64 pages per block
+		shift = 6
+	case size > (100 * mb):
+		// 128 pages per block:
+		shift = 7
+	}
+
+	// use shift to round to next page alignment:
+	nextSize := (((currPages >> shift) + 1) << shift) * pageSize
+	return nextSize
+}
+
 func Open(path string, sync bool) (*Log, error) {
 	flags := os.O_APPEND | os.O_CREATE | os.O_RDWR
 	fd, err := os.OpenFile(path, flags, 0600)
@@ -39,22 +69,15 @@ func Open(path string, sync bool) (*Log, error) {
 		return nil, fmt.Errorf("log: stat: %w", err)
 	}
 
-	mmapSize := int(info.Size())
-	if info.Size() == 0 {
-		// mmap() does not like to map zero size files.
-		// fake it by truncating to a small file size
-		// in that case.
-		if err := fd.Truncate(itemHeaderSize); err != nil {
-			return nil, fmt.Errorf("log: init-trunc: %w", err)
-		}
-
-		mmapSize = itemHeaderSize
+	mmapSize := nextSize(info.Size())
+	if err := fd.Truncate(mmapSize); err != nil {
+		return nil, fmt.Errorf("log: init-trunc: %w", err)
 	}
 
 	m, err := unix.Mmap(
 		int(fd.Fd()),
 		0,
-		mmapSize,
+		int(mmapSize),
 		unix.PROT_READ|unix.PROT_WRITE,
 		unix.MAP_SHARED,
 	)
@@ -88,18 +111,22 @@ func (l *Log) Push(items []item.Item) (item.Location, error) {
 		Len: item.Off(len(items)),
 	}
 
-	// extend the wal file to fit the new items:
-	newSize := l.size + int64(addSize)
-	if err := l.fd.Truncate(newSize); err != nil {
-		return item.Location{}, fmt.Errorf("truncate: %w", err)
-	}
+	nextMmapSize := nextSize(l.size + int64(addSize))
+	if nextMmapSize != int64(len(l.mmap)) {
+		// currently mmapped region does not suffice,
+		// allocate more space for it.
+		if err := l.fd.Truncate(nextMmapSize); err != nil {
+			return item.Location{}, fmt.Errorf("truncate: %w", err)
+		}
 
-	m, err := unix.Mremap(l.mmap, int(newSize), unix.MREMAP_MAYMOVE)
-	if err != nil {
-		return item.Location{}, fmt.Errorf("remap: %w", err)
-	}
+		// If we're unlucky we gonna have to move it:
+		m, err := unix.Mremap(l.mmap, int(nextMmapSize), unix.MREMAP_MAYMOVE)
+		if err != nil {
+			return item.Location{}, fmt.Errorf("remap: %w", err)
+		}
 
-	l.mmap = m
+		l.mmap = m
+	}
 
 	// copy the items to the file map:
 	for i := 0; i < len(items); i++ {

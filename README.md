@@ -69,10 +69,10 @@ BenchmarkPopSyncNone-16      	  35924	    33738 ns/op	    240 B/op	      5 alloc
 BenchmarkPopSyncData-16      	  35286	    33938 ns/op	    240 B/op	      5 allocs/op
 BenchmarkPopSyncIndex-16     	  34030	    34003 ns/op	    240 B/op	      5 allocs/op
 BenchmarkPopSyncFull-16      	  35170	    33592 ns/op	    240 B/op	      5 allocs/op
-BenchmarkPushSyncNone-16     	  18496	    64925 ns/op	     73 B/op	      2 allocs/op
-BenchmarkPushSyncData-16     	  13340	   102972 ns/op	     73 B/op	      2 allocs/op
-BenchmarkPushSyncIndex-16    	  13152	    84708 ns/op	     73 B/op	      2 allocs/op
-BenchmarkPushSyncFull-16     	  15430	    76081 ns/op	     73 B/op	      2 allocs/op
+BenchmarkPushSyncNone-16     	  20336	    56867 ns/op	     72 B/op	      2 allocs/op
+BenchmarkPushSyncData-16     	  20630	    58613 ns/op	     72 B/op	      2 allocs/op
+BenchmarkPushSyncIndex-16    	  20684	    58782 ns/op	     72 B/op	      2 allocs/op
+BenchmarkPushSyncFull-16     	  19994	    59491 ns/op	     72 B/op	      2 allocs/op
 ```
 
 ## Design
