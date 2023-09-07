@@ -56,6 +56,9 @@ func benchmarkPushPopWithSyncMode(b *testing.B, benchmarkPush bool, syncMode buc
 		}
 		dstItems = dstItems[:0]
 		_, err := queue.Pop(len(items), dstItems[:0])
+		if !benchmarkPush {
+			b.StopTimer()
+		}
 		require.NoError(b, err)
 	}
 

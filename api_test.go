@@ -68,3 +68,28 @@ func TestAPIPushPopSeveralBuckets(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, items, 0)
 }
+
+func TestAPIBinsplit(t *testing.T) {
+	idFunc := func(k Key) Key { return k }
+
+	items := Items{
+		Item{Key: 0},
+		Item{Key: 0},
+		Item{Key: 0},
+		Item{Key: 1},
+		Item{Key: 1},
+		Item{Key: 1},
+	}
+
+	require.Equal(t, 3, binsplit(items, 0, idFunc))
+	require.Equal(t, 6, binsplit(items, 1, idFunc))
+	require.Equal(t, 0, binsplit(Items{}, 0, idFunc))
+}
+
+func TestAPIBinsplitSeq(t *testing.T) {
+	idFunc := func(k Key) Key { return k }
+	items := testutils.GenItems(0, 10, 1)
+	for idx := 0; idx < len(items); idx++ {
+		require.Equal(t, 1, binsplit(items[idx:], Key(idx), idFunc))
+	}
+}

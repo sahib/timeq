@@ -79,7 +79,7 @@ func Open(path string, sync bool) (*Log, error) {
 		0,
 		int(mmapSize),
 		unix.PROT_READ|unix.PROT_WRITE,
-		unix.MAP_SHARED,
+		unix.MAP_SHARED_VALIDATE,
 	)
 
 	if err != nil {

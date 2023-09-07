@@ -277,7 +277,7 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 	for iter := b.idx.Iter(); iter.Next(); {
 		loc := iter.Value()
 		if loc.Key >= key {
-			// this index entry may live.
+			// this index entry may live untouched.
 			break
 		}
 
@@ -288,9 +288,10 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 		for logIter := b.log.At(loc); logIter.Next(&partialItem); {
 			if partialItem.Key >= key {
 				partialFound = true
-				partialLoc = logIter.CurrentLocation()
 				break
 			}
+
+			partialLoc = logIter.CurrentLocation()
 		}
 
 		if partialFound {

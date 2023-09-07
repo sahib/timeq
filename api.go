@@ -77,21 +77,31 @@ func Open(dir string, opts Options) (*Queue, error) {
 }
 
 // binsplit returns the first index of `items` that would
-// not go to the bucket `comp`. Not to be called on empty slices.
-func (q *Queue) binsplit(items Items, comp Key) int {
-	if len(items) <= 1 {
+// not go to the bucket `comp`. There are two assumptions:
+//
+// * "items" is not empty.
+// * "comp" exists for at least one fn(item.Key)
+// * The first key in `items` must be fn(key) == comp
+//
+// If assumptions are not fulfilled you will get bogus results.
+func binsplit(items Items, comp Key, fn func(Key) Key) int {
+	l := len(items)
+	if l == 0 {
+		return 0
+	}
+	if l == 1 {
 		return 1
 	}
 
-	pivotIdx := len(items) / 2
-	pivotKey := q.opts.BucketFunc(items[pivotIdx].Key)
+	pivotIdx := l / 2
+	pivotKey := fn(items[pivotIdx].Key)
 	if pivotKey != comp {
 		// search left:
-		return q.binsplit(items[:pivotIdx], comp)
+		return binsplit(items[:pivotIdx], comp, fn)
 	}
 
 	// search right:
-	return pivotIdx + q.binsplit(items[pivotIdx:], comp)
+	return pivotIdx + binsplit(items[pivotIdx:], comp, fn)
 }
 
 // Push pushes a batch of `items` to the queue.
@@ -112,7 +122,7 @@ func (q *Queue) Push(items Items) error {
 			return fmt.Errorf("bucket: for-key: %w", err)
 		}
 
-		nextIdx := q.binsplit(items, keyMod)
+		nextIdx := binsplit(items, keyMod, q.opts.BucketFunc)
 		if err := buck.Push(items[:nextIdx]); err != nil {
 			return fmt.Errorf("bucket: push: %w", err)
 		}

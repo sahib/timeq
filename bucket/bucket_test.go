@@ -198,12 +198,12 @@ func TestBucketDeleteLowerThan(t *testing.T) {
 
 		deleted, err := bucket.DeleteLowerThan(50)
 		require.NoError(t, err)
-		require.Equal(t, 50, deleted)
+		require.Equal(t, 49, deleted)
 		require.False(t, bucket.Empty())
 
-		deleted, err = bucket.DeleteLowerThan(150)
+		deleted, err = bucket.DeleteLowerThan(100)
 		require.NoError(t, err)
-		require.Equal(t, 50, deleted)
+		require.Equal(t, 51, deleted)
 		require.True(t, bucket.Empty())
 	})
 

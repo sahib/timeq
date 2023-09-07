@@ -133,3 +133,4 @@ Chris Pahl [@sahib](https://github.com/sahib)
 - [ ] Add way to run test as separate process that can be crashed randomly
 - [ ] Profile and optimize a bit more, if possible.
 - [ ] Use a configurable logger for warnings
+- [ ] We crash currently when running out of space.
