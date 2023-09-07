@@ -180,7 +180,8 @@ func handlePush(ctx *cli.Context, q *timeq.Queue) error {
 
 func handlePop(ctx *cli.Context, q *timeq.Queue) error {
 	n := ctx.Int("number")
-	items, err := q.Pop(n, make([]timeq.Item, 0, n))
+
+	items, err := q.Pop(n, nil)
 	if err != nil {
 		return err
 	}

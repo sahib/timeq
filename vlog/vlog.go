@@ -90,6 +90,7 @@ func Open(path string, sync bool) (*Log, error) {
 		fd:   fd,
 		mmap: m,
 		size: info.Size(),
+		sync: sync,
 	}, nil
 }
 
@@ -173,9 +174,9 @@ func (l *Log) readItemAt(off item.Off, it *item.Item) error {
 	}
 
 	// NOTE: We directly slice the memory map here. This means that the caller
-	// has to copy the slice if he wants to save it somewhere as we might overwrite,
-	// unmap or resize the underlying memory at a later point. Caller can use item.Copy()
-	// to obtain a copy.
+	// has to copy the slice if he wants to save it somewhere as we might
+	// overwrite, unmap or resize the underlying memory at a later point.
+	// Caller can use item.Copy() or items.Copy() to obtain a copy.
 	blobOff := off + itemHeaderSize
 	*it = item.Item{
 		Key:  item.Key(key),

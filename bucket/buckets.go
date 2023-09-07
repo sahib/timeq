@@ -18,6 +18,31 @@ type Buckets struct {
 	opts Options
 }
 
+func deleteBucketIfEmpty(buckPath string, opts Options) (bool, error) {
+	// NOTE: If you have a lot of buckets this would take a bit of time.
+	// However, it's simple, stupid and works. If one needs to do better
+	// we could write some marker to the bucket that quickly tells us if
+	// the bucket is empty.
+	buck, err := Open(buckPath, opts)
+	if err != nil {
+		return false, err
+	}
+
+	isEmpty := buck.Empty()
+	if err := buck.Close(); err != nil {
+		// return error, as this probably indicates some I/O problem.
+		return false, err
+	}
+
+	if isEmpty {
+		if err := os.RemoveAll(buckPath); err != nil {
+			return false, err
+		}
+	}
+
+	return isEmpty, nil
+}
+
 func LoadAll(dir string, opts Options) (*Buckets, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("mkdir: %w", err)
@@ -40,21 +65,10 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 			return nil, err
 		}
 
-		// TODO: streamline this code
-		buck, err := Open(buckPath, opts)
-		if err != nil {
+		if wasDeleted, err := deleteBucketIfEmpty(buckPath, opts); err != nil {
 			return nil, err
-		}
-
-		isEmpty := buck.Empty()
-		if err := buck.Close(); err != nil {
-			// TODO: only log here?
-		}
-
-		if isEmpty {
-			if err := os.RemoveAll(buckPath); err != nil {
-				return nil, err
-			}
+		} else if wasDeleted {
+			continue
 		}
 
 		// nil entries indicate buckets that were not loaded yet:

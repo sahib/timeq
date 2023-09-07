@@ -7,51 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/sahib/timeq/index"
 	"github.com/sahib/timeq/item"
 	"github.com/sahib/timeq/vlog"
 	"github.com/tidwall/btree"
-	"golang.org/x/exp/slog"
 )
 
-type SyncMode int
-
-// The available option are inspired by SQLite:
-// https://www.sqlite.org/pragma.html#pragma_synchronous
-const (
-	// SyncNone does not sync on normal operation (only on close)
-	SyncNone = SyncMode(1 << iota)
-	// SyncData only synchronizes the data log
-	SyncData
-	// SyncIndex only synchronizes the index log (does not make sense alone)
-	SyncIndex
-	// SyncFull syncs both the data and index log
-	SyncFull = SyncData | SyncIndex
-)
-
-// Options are fine-tuning knobs specific to individual buckets
-type Options struct {
-	// MaxSkew defines how much a key may be shifted in case of duplicates.
-	// This can lead to very small inaccuracies. Zero disables this.
-	MaxSkew time.Duration
-
-	// SyncMode controls how often we sync data to the disk. The more data we sync
-	// the more durable is the queue at the cost of throughput.
-	SyncMode SyncMode
-}
-
-func DefaultOptions() Options {
-	return Options{
-		// 1us is plenty time to shift a key
-		MaxSkew: time.Microsecond,
-		// default is to be safe:
-		SyncMode: SyncFull,
-	}
-}
-
-// TODO: add slog logger?
 type Bucket struct {
 	mu     sync.Mutex
 	dir    string
@@ -75,6 +37,8 @@ func Open(dir string, opts Options) (*Bucket, error) {
 	idxPath := filepath.Join(dir, "idx.log")
 	idx, err := index.Load(idxPath)
 	if err != nil {
+		opts.Logger.Printf("failed to load index %s: %v", idxPath, err)
+
 		tree, genErr := log.GenerateIndex()
 		if err != nil {
 			// not much we can by now
@@ -86,6 +50,8 @@ func Open(dir string, opts Options) (*Bucket, error) {
 		if err := os.Remove(idxPath); err != nil {
 			return nil, fmt.Errorf("index failover: could not remove broken index: %w", err)
 		}
+
+		opts.Logger.Printf("recovered index with %d entries", idx.Len())
 	}
 
 	idxLog, err := index.NewWriter(idxPath, opts.SyncMode&SyncIndex > 0)
@@ -147,7 +113,7 @@ func (b *Bucket) Push(items []item.Item) error {
 	skewLoc, skews := b.idx.SetSkewed(loc, maxSkew)
 	if skews == maxSkew {
 		// at least warn user since this might lead to lost data:
-		slog.Warn("push: maximum skew was reached", "key", loc.Key, "skew", b.opts.MaxSkew)
+		b.opts.Logger.Printf("push: maximum skew was reached (key=%v skew=%d)", loc.Key, b.opts.MaxSkew)
 	}
 
 	if err := b.idxLog.Push(skewLoc); err != nil {
@@ -240,13 +206,13 @@ func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, int, error) {
 
 	// Now since we've collected all data we need to remember what we consumed.
 	for _, batchIter := range *batchIters {
-		b.idx.Delete(batchIter.Key())
+		b.idx.Delete(batchIter.FirstKey())
 
 		currLoc := batchIter.CurrentLocation()
 		if batchIter.Exhausted() {
 			// this batch was fullly exhausted during Pop()
 			// mark it as such in the index-wal.
-			currLoc.Key = batchIter.Key()
+			currLoc.Key = batchIter.FirstKey()
 			currLoc.Off = 0
 			currLoc.Len = 0
 		} else {

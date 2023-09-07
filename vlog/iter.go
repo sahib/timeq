@@ -4,8 +4,6 @@ import (
 	"github.com/sahib/timeq/item"
 )
 
-// TODO: I don't really like the API here. That iter is too fat.
-
 type LogIter struct {
 	key              item.Key
 	currOff, currLen item.Off
@@ -54,7 +52,7 @@ func (li *LogIter) Exhausted() bool {
 
 // Key returns the key this iterator was created with
 // This is not the current key of the item!
-func (li *LogIter) Key() item.Key {
+func (li *LogIter) FirstKey() item.Key {
 	return li.key
 }
 
