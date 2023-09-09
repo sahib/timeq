@@ -88,7 +88,7 @@ BenchmarkPushSyncFull-16     	  19994	    59491 ns/op	     72 B/op	      2 alloc
 * Once a bucket was completely drained it is removed from disk to retain space.
 
 Since the index is quite small (only one entry per batch) we can fit in memory.
-Only the index of buckets is loaded that were pushed to or popped from.
+On the initial load all bucket indexes are loaded, but no memory is mapped yet.
 
 ## FAQ:
 
@@ -103,8 +103,18 @@ of the existing benchmarks to test your assumptions.
 
 ### Can I store more than one value per key?
 
-Yes, you can. This slows pushing down a bit though, so you might want to avoid
-it. If you want to use priority keys that are in a very narrow range (thus many
+Yes, you can. This is not a workload `timeq` is optimized for though. Some background:
+The index stores only one priority key per batch. If a batch with the same key was inserted,
+we could restructure the index to allow more than location per key. This would however introduce
+allocations for every index entry and make the general handling more complicated.
+
+As the duplicate case is considered to be an exception from the rule (assuming
+unix-epoch based workloads) ``timeq`` goes with "skewing" the key of the
+duplicated batch a little by incrementing it until a free place in the index
+was found. This is the reason why ``Push()`` performance will slow down a bit
+if you insert a lot duplicated keys.
+
+If you want to use priority keys that are in a very narrow range (thus many
 duplicates) then you can think about spreading the range a bit wider.
 
 For example: You have priority keys from zero to ten for the tasks in your job

@@ -1,8 +1,6 @@
 package vlog
 
 import (
-	"fmt"
-
 	"github.com/sahib/timeq/item"
 )
 
@@ -86,20 +84,20 @@ type LogIters []LogIter
 func (ls LogIters) Len() int      { return len(ls) }
 func (ls LogIters) Swap(i, j int) { ls[i], ls[j] = ls[j], ls[i] }
 func (ls LogIters) Less(i, j int) bool {
-	if ls[i].exhausted != ls[j].exhausted {
+	ii, ij := ls[i], ls[j]
+	if ii.exhausted != ij.exhausted {
 		// sort exhausted iters to the back
 		return !ls[i].exhausted
 	}
 
-	ki, kj := ls[i].item.Key, ls[j].item.Key
-	if ki != kj {
-		return ki < kj
-	}
-
-	fmt.Println(ls[i], "<", ls[j])
-	return false
+	ki, kj := ii.item.Key, ij.item.Key
+	return ki < kj
 }
-func (ls *LogIters) Push(x any) { *ls = append(*ls, x.(LogIter)) }
+
+func (ls *LogIters) Push(x any) {
+	*ls = append(*ls, x.(LogIter))
+}
+
 func (ls *LogIters) Pop() any {
 	old := *ls
 	n := len(old)

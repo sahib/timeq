@@ -49,6 +49,7 @@ func (i *Index) SetSkewed(loc item.Location, maxSkew int) (item.Location, int) {
 	i.Set(loc.Key, prev)
 
 	// try to find a unique timestamp by cheating a little:
+	// TODO: That could be probably optimized.
 	var skew item.Key
 	for skew < item.Key(maxSkew) {
 		if _, ok := i.Get(loc.Key + skew); ok {

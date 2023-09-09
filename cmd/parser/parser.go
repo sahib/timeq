@@ -191,6 +191,7 @@ func handlePop(ctx *cli.Context, q *timeq.Queue) error {
 		return err
 	}
 
+	fmt.Println("----")
 	for _, item := range items {
 		fmt.Println(item)
 	}
