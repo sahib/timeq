@@ -1,6 +1,8 @@
 package vlog
 
 import (
+	"fmt"
+
 	"github.com/sahib/timeq/item"
 )
 
@@ -20,7 +22,7 @@ func (li *LogIter) Next(itDst *item.Item) bool {
 		return false
 	}
 
-	if li.currOff >= item.Off(li.log.size) {
+	if len(li.log.mmap) > 0 && li.currOff >= item.Off(li.log.size) {
 		// stop iterating when end of log reached.
 		li.exhausted = true
 		return false
@@ -89,7 +91,13 @@ func (ls LogIters) Less(i, j int) bool {
 		return !ls[i].exhausted
 	}
 
-	return ls[i].item.Key < ls[j].item.Key
+	ki, kj := ls[i].item.Key, ls[j].item.Key
+	if ki != kj {
+		return ki < kj
+	}
+
+	fmt.Println(ls[i], "<", ls[j])
+	return false
 }
 func (ls *LogIters) Push(x any) { *ls = append(*ls, x.(LogIter)) }
 func (ls *LogIters) Pop() any {

@@ -18,29 +18,29 @@ type Buckets struct {
 	opts Options
 }
 
-func deleteBucketIfEmpty(buckPath string, opts Options) (bool, error) {
+func loadAndDeleteBucketIfEmpty(buckPath string, opts Options) (*Bucket, bool, error) {
 	// NOTE: If you have a lot of buckets this would take a bit of time.
 	// However, it's simple, stupid and works. If one needs to do better
 	// we could write some marker to the bucket that quickly tells us if
 	// the bucket is empty.
 	buck, err := Open(buckPath, opts)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 
-	isEmpty := buck.Empty()
+	if !buck.Empty() {
+		return buck, false, nil
+	}
+
 	if err := buck.Close(); err != nil {
-		// return error, as this probably indicates some I/O problem.
-		return false, err
+		return nil, false, err
 	}
 
-	if isEmpty {
-		if err := os.RemoveAll(buckPath); err != nil {
-			return false, err
-		}
+	if err := os.RemoveAll(buckPath); err != nil {
+		return nil, false, err
 	}
 
-	return isEmpty, nil
+	return nil, true, nil
 }
 
 func LoadAll(dir string, opts Options) (*Buckets, error) {
@@ -65,14 +65,22 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 			return nil, err
 		}
 
-		if wasDeleted, err := deleteBucketIfEmpty(buckPath, opts); err != nil {
-			return nil, err
+		// NOTE: This is intentionally kept simple. There is no size marker or
+		// similar to hint deleting a bucket without loading it first. This
+		// means that we have to load all buckets on startup, occupying some
+		// memory. If you think about optimizing this, you have to consider:
+		//
+		// - Len() needs some way to also report unloaded bucket size
+		// - ByKey() and Iter() need to load not yet loaded buckets.
+		buck, wasDeleted, err := loadAndDeleteBucketIfEmpty(buckPath, opts)
+		if err != nil {
+			return nil, fmt.Errorf("load-or-delete: %w", err)
 		} else if wasDeleted {
 			continue
 		}
 
 		// nil entries indicate buckets that were not loaded yet:
-		tree.Set(key, nil)
+		tree.Set(key, buck)
 	}
 
 	return &Buckets{
@@ -146,15 +154,6 @@ func (bs *Buckets) Iter(fn func(b *Bucket) error) error {
 
 	var err error
 	bs.tree.Scan(func(key item.Key, buck *Bucket) bool {
-		if buck == nil {
-			// not yet loaded bucket:
-			var buckErr error
-			buck, buckErr = Open(bs.buckPath(key), bs.opts)
-			if buckErr != nil {
-				err = buckErr
-			}
-		}
-
 		if err = fn(buck); err != nil {
 			if err == IterStop {
 				err = nil
@@ -168,6 +167,7 @@ func (bs *Buckets) Iter(fn func(b *Bucket) error) error {
 }
 
 func (bs *Buckets) Sync() error {
+	// TOOD: sync syncs all buckets currently and opens some newly
 	var err error
 	_ = bs.Iter(func(b *Bucket) error {
 		// try to sync as much as possible:
@@ -182,12 +182,7 @@ func (bs *Buckets) Clear() error {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 
-	keys := []item.Key{}
-	bs.tree.Scan(func(key item.Key, _ *Bucket) bool {
-		keys = append(keys, key)
-		return true
-	})
-
+	keys := bs.tree.Keys()
 	for _, key := range keys {
 		if err := bs.delete(key); err != nil {
 			return err

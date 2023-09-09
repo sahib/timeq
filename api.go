@@ -67,7 +67,7 @@ type Queue struct {
 func Open(dir string, opts Options) (*Queue, error) {
 	bs, err := bucket.LoadAll(dir, opts.Options)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("buckets: %w", err)
 	}
 
 	return &Queue{

@@ -49,12 +49,12 @@ func withQueue(fn func(ctx *cli.Context, q *timeq.Queue) error) cli.ActionFunc {
 
 		opts, err := optionsFromCtx(ctx)
 		if err != nil {
-			return err
+			return fmt.Errorf("options: %w", err)
 		}
 
 		queue, err := timeq.Open(dir, opts)
 		if err != nil {
-			return err
+			return fmt.Errorf("open: %w", err)
 		}
 
 		if err := fn(ctx, queue); err != nil {
@@ -62,7 +62,11 @@ func withQueue(fn func(ctx *cli.Context, q *timeq.Queue) error) cli.ActionFunc {
 			return err
 		}
 
-		return queue.Close()
+		if err := queue.Close(); err != nil {
+			return fmt.Errorf("close: %w", err)
+		}
+
+		return nil
 	}
 }
 
@@ -71,6 +75,7 @@ func Run(args []string) error {
 	app := cli.NewApp()
 	app.Name = "timeq"
 	app.Usage = "A persistent, time-based priority queue"
+	app.Description = "This is a toy frontend to timeq. It's hellish inefficient, but nice to test behavior."
 	app.Version = "0.0.1"
 
 	cwd, err := os.Getwd()

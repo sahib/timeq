@@ -1,7 +1,6 @@
 package timeq
 
 import (
-	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -43,9 +42,7 @@ func TestAPIPushPopSeveralBuckets(t *testing.T) {
 	// Push two batches:
 	push1 := Items(testutils.GenItems(10, 20, 1))
 	push2 := Items(testutils.GenItems(30, 40, 1))
-	fmt.Println("---- 1")
 	require.NoError(t, queue.Push(push1))
-	fmt.Println("---- 2")
 	require.NoError(t, queue.Push(push2))
 	require.Equal(t, 20, queue.Len())
 

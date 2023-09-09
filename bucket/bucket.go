@@ -29,11 +29,7 @@ func Open(dir string, opts Options) (*Bucket, error) {
 		return nil, err
 	}
 
-	log, err := vlog.Open(filepath.Join(dir, "dat.log"), opts.SyncMode&SyncData > 0)
-	if err != nil {
-		return nil, err
-	}
-
+	log := vlog.Open(filepath.Join(dir, "dat.log"), opts.SyncMode&SyncData > 0)
 	idxPath := filepath.Join(dir, "idx.log")
 	idx, err := index.Load(idxPath)
 	if err != nil {
@@ -111,6 +107,7 @@ func (b *Bucket) Push(items []item.Item) error {
 
 	maxSkew := int(b.opts.MaxSkew)
 	skewLoc, skews := b.idx.SetSkewed(loc, maxSkew)
+	fmt.Println("SKEW", skews)
 	if skews == maxSkew {
 		// at least warn user since this might lead to lost data:
 		b.opts.Logger.Printf("push: maximum skew was reached (key=%v skew=%d)", loc.Key, b.opts.MaxSkew)
@@ -126,18 +123,18 @@ func (b *Bucket) Push(items []item.Item) error {
 // addPopIter adds a new batchIter to `batchIters` and advances the idxIter.
 func (b *Bucket) addPopIter(batchIters *vlog.LogIters, idxIter *btree.MapIter[item.Key, item.Location]) (bool, error) {
 	loc := idxIter.Value()
-	batchIter := b.log.At(loc)
+	batchIter, err := b.log.At(loc)
+	if err != nil {
+		return false, err
+	}
+
 	if !batchIter.Next(nil) {
 		// might be empty or I/O error:
 		return false, batchIter.Err()
 	}
 
 	heap.Push(batchIters, batchIter)
-	if !idxIter.Next() {
-		return true, nil
-	}
-
-	return false, nil
+	return !idxIter.Next(), nil
 }
 
 func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, int, error) {
@@ -161,6 +158,12 @@ func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, int, error) {
 	batchIters := &batchItersSlice
 	indexExhausted, err := b.addPopIter(batchIters, &idxIter)
 	if err != nil {
+		return dst, 0, err
+	}
+
+	if len(*batchIters) == 0 {
+		// this should not happen normally, but can possibly
+		// in case of broken index or wal.
 		return dst, 0, err
 	}
 
@@ -206,22 +209,28 @@ func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, int, error) {
 
 	// Now since we've collected all data we need to remember what we consumed.
 	for _, batchIter := range *batchIters {
-		b.idx.Delete(batchIter.FirstKey())
+		if !batchIter.Exhausted() {
+			currLoc := batchIter.CurrentLocation()
 
-		currLoc := batchIter.CurrentLocation()
-		if batchIter.Exhausted() {
-			// this batch was fullly exhausted during Pop()
-			// mark it as such in the index-wal.
-			currLoc.Key = batchIter.FirstKey()
-			currLoc.Off = 0
-			currLoc.Len = 0
-		} else {
 			// some keys were take from it, but not all (or none)
 			// we need to adjust the index to keep those reachable.
+			// TODO: Possibly we also have to use SetSkewed here.
 			b.idx.Set(currLoc.Key, currLoc)
+			if err := b.idxLog.Push(currLoc); err != nil {
+				return dst, 0, fmt.Errorf("idxlog: append begun: %w", err)
+			}
 		}
 
-		if err := b.idxLog.Push(currLoc); err != nil {
+		b.idx.Delete(batchIter.FirstKey())
+
+		// this batch was fullly exhausted during Pop()
+		// mark it as such in the index-wal:
+		deadLoc := item.Location{
+			Key: batchIter.FirstKey(),
+			Len: 0,
+			Off: 0,
+		}
+		if err := b.idxLog.Push(deadLoc); err != nil {
 			return dst, 0, fmt.Errorf("idxlog: append begun: %w", err)
 		}
 	}
@@ -251,7 +260,13 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 		var partialFound bool
 		var partialItem item.Item
 		var partialLoc item.Location
-		for logIter := b.log.At(loc); logIter.Next(&partialItem); {
+
+		logIter, err := b.log.At(loc)
+		if err != nil {
+			return numDeleted, err
+		}
+
+		for logIter.Next(&partialItem) {
 			if partialItem.Key >= key {
 				partialFound = true
 				break
@@ -263,6 +278,7 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 		if partialFound {
 			// we found an enrty in the log that is >= key.
 			// resize the index entry to skip the entries before.
+			// TODO: also use SetSkewed here
 			b.idx.Set(partialItem.Key, item.Location{
 				Key: partialItem.Key,
 				Off: partialLoc.Off,

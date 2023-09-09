@@ -16,10 +16,8 @@ func TestIter(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	log, err := Open(filepath.Join(tmpDir, "log"), true)
-	require.NoError(t, err)
-
 	// Push a few items before:
+	log := Open(filepath.Join(tmpDir, "log"), true)
 	_, err = log.Push(testutils.GenItems(0, 10, 1))
 	require.NoError(t, err)
 
@@ -33,7 +31,9 @@ func TestIter(t *testing.T) {
 
 	var count int
 	var it item.Item
-	iter := log.At(loc)
+	iter, err := log.At(loc)
+	require.NoError(t, err)
+
 	for iter.Next(&it) {
 		require.Equal(t, item.Item{
 			Key:  item.Key(count + 10),
@@ -60,10 +60,10 @@ func TestIterEmpty(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	log, err := Open(filepath.Join(tmpDir, "log"), true)
+	log := Open(filepath.Join(tmpDir, "log"), true)
+	iter, err := log.At(item.Location{})
 	require.NoError(t, err)
 
-	iter := log.At(item.Location{})
 	var it item.Item
 	require.False(t, iter.Next(&it))
 	require.NoError(t, iter.Err())
@@ -75,13 +75,12 @@ func TestIterInvalidLocation(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	log, err := Open(filepath.Join(tmpDir, "log"), true)
-	require.NoError(t, err)
-
-	iter := log.At(item.Location{
+	log := Open(filepath.Join(tmpDir, "log"), true)
+	iter, err := log.At(item.Location{
 		Off: 0x2A,
 		Len: 1000,
 	})
+	require.NoError(t, err)
 
 	var it item.Item
 	require.False(t, iter.Next(&it))

@@ -24,8 +24,7 @@ func TestLogOpenUnaligned(t *testing.T) {
 	logPath := filepath.Join(tmpDir, "log")
 	require.NoError(t, os.WriteFile(logPath, fakeBlob, 0600))
 
-	log, err := Open(logPath, true)
-	require.NoError(t, err)
+	log := Open(logPath, true)
 	require.NoError(t, log.Close())
 }
 
@@ -34,8 +33,7 @@ func TestLogOpenEmpty(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	log, err := Open(filepath.Join(tmpDir, "log"), true)
-	require.NoError(t, err)
+	log := Open(filepath.Join(tmpDir, "log"), true)
 	require.NoError(t, log.Close())
 }
 
@@ -44,9 +42,7 @@ func TestLogOpenPushRead(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	log, err := Open(filepath.Join(tmpDir, "log"), true)
-	require.NoError(t, err)
-
+	log := Open(filepath.Join(tmpDir, "log"), true)
 	loc, err := log.Push(testutils.GenItems(1, 2, 1))
 	require.NoError(t, err)
 	require.Equal(t, loc, item.Location{
@@ -70,9 +66,7 @@ func testLogGenerateIndex(t *testing.T, pushes [][]item.Item, expLocs []item.Loc
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	log, err := Open(filepath.Join(tmpDir, "log"), true)
-	require.NoError(t, err)
-
+	log := Open(filepath.Join(tmpDir, "log"), true)
 	for _, push := range pushes {
 		_, err = log.Push(push)
 		require.NoError(t, err)

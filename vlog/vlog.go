@@ -21,10 +21,11 @@ import (
 const itemHeaderSize = 12
 
 type Log struct {
-	fd   *os.File
-	mmap []byte
-	size int64
-	sync bool
+	path        string
+	fd          *os.File
+	mmap        []byte
+	size        int64
+	syncOnWrite bool
 }
 
 func nextSize(size int64) int64 {
@@ -57,24 +58,40 @@ func nextSize(size int64) int64 {
 	return nextSize
 }
 
-func Open(path string, sync bool) (*Log, error) {
+func Open(path string, syncOnWrite bool) *Log {
+	return &Log{
+		// this will lazy-initialze on first access:
+		path:        path,
+		syncOnWrite: syncOnWrite,
+	}
+}
+
+func (l *Log) init() error {
+	if len(l.mmap) > 0 {
+		return nil
+	}
+
 	flags := os.O_APPEND | os.O_CREATE | os.O_RDWR
-	fd, err := os.OpenFile(path, flags, 0600)
+	fd, err := os.OpenFile(l.path, flags, 0600)
 	if err != nil {
-		return nil, fmt.Errorf("log: open: %w", err)
+		return fmt.Errorf("log: open: %w", err)
 	}
 
 	info, err := fd.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("log: stat: %w", err)
+		fd.Close()
+		return fmt.Errorf("log: stat: %w", err)
 	}
 
-	mmapSize := nextSize(info.Size())
-	if err := fd.Truncate(mmapSize); err != nil {
-		return nil, fmt.Errorf("log: init-trunc: %w", err)
+	mmapSize := info.Size()
+	if mmapSize == 0 {
+		mmapSize = nextSize(0)
+		if err := fd.Truncate(mmapSize); err != nil {
+			return fmt.Errorf("truncate: %w", err)
+		}
 	}
 
-	m, err := unix.Mmap(
+	mmap, err := unix.Mmap(
 		int(fd.Fd()),
 		0,
 		int(mmapSize),
@@ -83,15 +100,50 @@ func Open(path string, sync bool) (*Log, error) {
 	)
 
 	if err != nil {
-		return nil, fmt.Errorf("log: mmap: %w", err)
+		fd.Close()
+		return fmt.Errorf("log: mmap: %w", err)
 	}
 
-	return &Log{
-		fd:   fd,
-		mmap: m,
-		size: info.Size(),
-		sync: sync,
-	}, nil
+	l.size = info.Size()
+	l.fd = fd
+	l.mmap = mmap
+
+	// read the initial size. We can't use the file size as we
+	// pre-allocated the file to a certain length and we don't
+	// know much of it was used. If we would use info.Size() here
+	// we would waste some space since new pushes are written beyond
+	// the truncated area.
+
+	size, err := l.readActualSize()
+	if err != nil {
+		return fmt.Errorf("log: initial size: %w", err)
+	}
+
+	l.size = size
+	return nil
+}
+
+func (l *Log) readActualSize() (int64, error) {
+	iter := LogIter{
+		// we're cheating a little here by trusting the iterator
+		// to go not over the end, even if the Len is bogus.
+		currOff: 0,
+		currLen: ^item.Off(0),
+		log:     l,
+	}
+
+	var size int64
+	var it item.Item
+	for iter.Next(&it) && len(it.Blob) > 0 {
+		size += int64(len(it.Blob)) + itemHeaderSize
+	}
+
+	if err := iter.Err(); err != nil {
+		return 0, fmt.Errorf("size: %w", err)
+	}
+
+	return size, nil
+
 }
 
 func (l *Log) writeItem(item item.Item) {
@@ -101,6 +153,10 @@ func (l *Log) writeItem(item item.Item) {
 }
 
 func (l *Log) Push(items []item.Item) (item.Location, error) {
+	if err := l.init(); err != nil {
+		return item.Location{}, err
+	}
+
 	addSize := len(items) * itemHeaderSize
 	for i := 0; i < len(items); i++ {
 		addSize += len(items[i].Blob)
@@ -113,7 +169,7 @@ func (l *Log) Push(items []item.Item) (item.Location, error) {
 	}
 
 	nextMmapSize := nextSize(l.size + int64(addSize))
-	if nextMmapSize != int64(len(l.mmap)) {
+	if nextMmapSize > int64(len(l.mmap)) {
 		// currently mmapped region does not suffice,
 		// allocate more space for it.
 		if err := l.fd.Truncate(nextMmapSize); err != nil {
@@ -142,13 +198,17 @@ func (l *Log) Push(items []item.Item) (item.Location, error) {
 	return loc, nil
 }
 
-func (l *Log) At(loc item.Location) LogIter {
+func (l *Log) At(loc item.Location) (LogIter, error) {
+	if err := l.init(); err != nil {
+		return LogIter{}, err
+	}
+
 	return LogIter{
 		key:     loc.Key,
 		currOff: loc.Off,
 		currLen: loc.Len,
 		log:     l,
-	}
+	}, nil
 }
 
 func (l *Log) readItemAt(off item.Off, it *item.Item) error {
@@ -191,6 +251,10 @@ func (l *Log) readItemAt(off item.Off, it *item.Item) error {
 // is damaged or broken in some way. The resulting index is likely
 // not the same as before, but probably a bit cleaner.
 func (l *Log) GenerateIndex() (*btree.Map[item.Key, item.Location], error) {
+	if err := l.init(); err != nil {
+		return nil, err
+	}
+
 	iter := LogIter{
 		// we're cheating a little here by trusting the iterator
 		// to go not over the end, even if the Len is bogus.
@@ -239,7 +303,11 @@ func (l *Log) GenerateIndex() (*btree.Map[item.Key, item.Location], error) {
 }
 
 func (l *Log) Sync(force bool) error {
-	if !l.sync && !force {
+	if !l.syncOnWrite && !force {
+		return nil
+	}
+
+	if len(l.mmap) == 0 {
 		return nil
 	}
 
@@ -247,6 +315,11 @@ func (l *Log) Sync(force bool) error {
 }
 
 func (l *Log) Close() error {
+	if len(l.mmap) == 0 {
+		// not yet loaded.
+		return nil
+	}
+
 	syncErr := unix.Msync(l.mmap, unix.MS_SYNC)
 	unmapErr := unix.Munmap(l.mmap)
 	closeErr := l.fd.Close()
