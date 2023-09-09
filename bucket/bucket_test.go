@@ -1,9 +1,9 @@
 package bucket
 
 import (
-	"encoding/binary"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/sahib/timeq/item"
@@ -206,67 +206,38 @@ func TestBucketDeleteLowerThan(t *testing.T) {
 		require.Equal(t, 51, deleted)
 		require.True(t, bucket.Empty())
 	})
-
 }
 
-func benchmarkPushPopWithSyncMode(b *testing.B, syncMode SyncMode) {
-	dir, err := os.MkdirTemp("", "timeq-buckettest")
-	require.NoError(b, err)
-	defer os.RemoveAll(dir)
-
-	opts := DefaultOptions()
-	opts.SyncMode = syncMode
-
-	bucketDir := filepath.Join(dir, item.Key(23).String())
-	bucket, err := Open(bucketDir, opts)
-	require.NoError(b, err)
-
-	// Add some dummy data:
-	items := make([]item.Item, 2000)
-	dstItems := make([]item.Item, 0, 2000)
-	timeoff := 0
-
-	b.ResetTimer()
-	for run := 0; run < b.N; run++ {
-		for idx := 0; idx < len(items); idx++ {
-			// use a realistic size for each message:
-			var buf [40]byte
-			for pos := 0; pos < cap(buf); pos += 8 {
-				binary.BigEndian.PutUint64(buf[pos:], uint64(timeoff+idx))
-			}
-
-			items[idx].Key = item.Key(timeoff + idx)
-			items[idx].Blob = buf[:]
+func TestPushDuplicates(t *testing.T) {
+	withEmptyBucket(t, func(bucket *Bucket) {
+		const pushes = 100
+		expItems := testutils.GenItems(0, 10, 1)
+		for idx := 0; idx < pushes; idx++ {
+			require.NoError(t, bucket.Push(expItems))
+			require.Equal(t, (idx+1)*len(expItems), bucket.Len())
 		}
 
-		timeoff += len(items)
-		require.NoError(b, bucket.Push(items))
+		buckLen := bucket.Len()
+		gotItems, popped, err := bucket.Pop(buckLen, nil)
+		require.NoError(t, err)
+		require.Equal(t, buckLen, popped)
+		require.Equal(t, buckLen, len(gotItems))
+		require.True(t, slices.IsSortedFunc(gotItems, func(i, j item.Item) int {
+			return int(i.Key - j.Key)
+		}))
 
-		b.StartTimer()
-		dstItems = dstItems[:0]
-		_, _, err := bucket.Pop(len(items), dstItems[:0])
-		b.StopTimer()
-		require.NoError(b, err)
-	}
-
-	require.NoError(b, bucket.Close())
-}
-
-func BenchmarkPushPopSyncNone(b *testing.B) {
-	benchmarkPushPopWithSyncMode(b, SyncNone)
-}
-func BenchmarkPushPopSyncData(b *testing.B) {
-	benchmarkPushPopWithSyncMode(b, SyncData)
-}
-func BenchmarkPushPopSyncIndex(b *testing.B) {
-	benchmarkPushPopWithSyncMode(b, SyncIndex)
-}
-func BenchmarkPushPopSyncFull(b *testing.B) {
-	benchmarkPushPopWithSyncMode(b, SyncFull)
+		for key := 0; key < len(expItems); key++ {
+			for idx := 0; idx < pushes; idx++ {
+				it := gotItems[key*pushes+idx]
+				require.Equal(t, item.Key(key), it.Key)
+			}
+		}
+	})
 }
 
 // TODO: Tests:
 // - overlapping pushes.
-// - skewed pushes
-// - overwritign pushes
 // - key function (api)
+// - re-open tests:
+//   - bucket deleted?
+//   - popped items really gone?
