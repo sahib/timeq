@@ -50,7 +50,7 @@ func TestIndexSetNoSkew(t *testing.T) {
 	index := Index{}
 
 	oldLoc := item.Location{Key: 23}
-	newLoc, skew := index.SetSkewed(oldLoc, 10)
+	newLoc, skew := index.Set(oldLoc, 10)
 	require.Equal(t, oldLoc, newLoc)
 	require.Equal(t, 0, skew)
 }
@@ -59,8 +59,8 @@ func TestIndexSetWithSkew(t *testing.T) {
 	index := Index{}
 
 	oldLoc := item.Location{Key: 23}
-	index.SetSkewed(oldLoc, 10)
-	newLoc, skew := index.SetSkewed(oldLoc, 10)
+	index.Set(oldLoc, 10)
+	newLoc, skew := index.Set(oldLoc, 10)
 	require.Equal(t, 1, skew)
 	require.Equal(t, item.Key(24), newLoc.Key)
 }
@@ -70,10 +70,10 @@ func TestIndexSetWithMaxSkew(t *testing.T) {
 
 	oldLoc := item.Location{Key: 23}
 	for idx := 0; idx < 100; idx++ {
-		index.SetSkewed(oldLoc, 10)
+		index.Set(oldLoc, 10)
 	}
 
-	newLoc, skew := index.SetSkewed(oldLoc, 10)
+	newLoc, skew := index.Set(oldLoc, 10)
 	require.Equal(t, 10, skew)
 	require.Equal(t, item.Key(23), newLoc.Key)
 }

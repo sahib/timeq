@@ -11,7 +11,6 @@ import (
 	"github.com/sahib/timeq/index"
 	"github.com/sahib/timeq/item"
 	"github.com/sahib/timeq/vlog"
-	"github.com/tidwall/btree"
 )
 
 type Bucket struct {
@@ -42,7 +41,7 @@ func Open(dir string, opts Options) (*Bucket, error) {
 		}
 
 		// continue with rebuild index, but remove broken one:
-		idx = &index.Index{Map: *tree}
+		idx = index.FromTree(tree)
 		if err := os.Remove(idxPath); err != nil {
 			return nil, fmt.Errorf("index failover: could not remove broken index: %w", err)
 		}
@@ -106,7 +105,7 @@ func (b *Bucket) Push(items []item.Item) error {
 	}
 
 	maxSkew := int(b.opts.MaxSkew)
-	skewLoc, skews := b.idx.SetSkewed(loc, maxSkew)
+	skewLoc, skews := b.idx.Set(loc, maxSkew)
 	if skews == maxSkew {
 		// at least warn user since this might lead to lost data:
 		b.opts.Logger.Printf("push: maximum skew was reached (key=%v skew=%d)", loc.Key, b.opts.MaxSkew)
@@ -120,7 +119,7 @@ func (b *Bucket) Push(items []item.Item) error {
 }
 
 // addPopIter adds a new batchIter to `batchIters` and advances the idxIter.
-func (b *Bucket) addPopIter(batchIters *vlog.LogIters, idxIter *btree.MapIter[item.Key, item.Location]) (bool, error) {
+func (b *Bucket) addPopIter(batchIters *vlog.LogIters, idxIter *index.Iter) (bool, error) {
 	loc := idxIter.Value()
 	batchIter, err := b.log.At(loc)
 	if err != nil {
@@ -223,7 +222,7 @@ func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, int, error) {
 
 			// some keys were take from it, but not all (or none)
 			// we need to adjust the index to keep those reachable.
-			b.idx.SetSkewed(currLoc, int(b.opts.MaxSkew))
+			b.idx.Set(currLoc, int(b.opts.MaxSkew))
 			if err := b.idxLog.Push(currLoc); err != nil {
 				return dst, 0, fmt.Errorf("idxlog: append begun: %w", err)
 			}
@@ -286,7 +285,7 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 		if partialFound {
 			// we found an enrty in the log that is >= key.
 			// resize the index entry to skip the entries before.
-			b.idx.SetSkewed(item.Location{
+			b.idx.Set(item.Location{
 				Key: partialItem.Key,
 				Off: partialLoc.Off,
 				Len: partialLoc.Len,
