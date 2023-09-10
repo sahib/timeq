@@ -169,6 +169,12 @@ func (l *Log) Push(items []item.Item) (item.Location, error) {
 
 	nextMmapSize := nextSize(l.size + int64(addSize))
 	if nextMmapSize > int64(len(l.mmap)) {
+		if nextMmapSize > int64(^item.Off(0)) {
+			// the mmap size is bigger than what our offsets can handle.
+			// we have to error out.
+			return item.Location{}, fmt.Errorf("wal-file bigger than 4GB")
+		}
+
 		// currently mmapped region does not suffice,
 		// allocate more space for it.
 		if err := l.fd.Truncate(nextMmapSize); err != nil {
@@ -219,7 +225,8 @@ func (l *Log) readItemAt(off item.Off, it *item.Item) error {
 	len := binary.BigEndian.Uint32(l.mmap[off+0:])
 	key := binary.BigEndian.Uint64(l.mmap[off+4:])
 
-	if len > 4*1024*1024 {
+	if len > 64*1024*1024 {
+		// fail-safe if the size field is corrupt:
 		return fmt.Errorf("log: allocation too big for one value: %d", len)
 	}
 

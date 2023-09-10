@@ -308,7 +308,6 @@ func (b *Bucket) Len() int {
 	size := 0
 	iter := b.idx.Iter()
 	for iter.Next() {
-		fmt.Println(iter.Value())
 		size += int(iter.Value().Len)
 	}
 
