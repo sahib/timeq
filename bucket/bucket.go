@@ -33,15 +33,12 @@ func Open(dir string, opts Options) (*Bucket, error) {
 	idx, err := index.Load(idxPath)
 	if err != nil {
 		opts.Logger.Printf("failed to load index %s: %v", idxPath, err)
-
-		tree, genErr := log.GenerateIndex()
+		idx, err = index.FromVlog(log)
 		if err != nil {
-			// not much we can by now
-			return nil, fmt.Errorf("index load: %w (could not regen: %w)", err, genErr)
+			// not much we can do for that case:
+			return nil, fmt.Errorf("index load failed & could not regenerate: %w", err)
 		}
 
-		// continue with rebuild index, but remove broken one:
-		idx = index.FromTree(tree)
 		if err := os.Remove(idxPath); err != nil {
 			return nil, fmt.Errorf("index failover: could not remove broken index: %w", err)
 		}
@@ -104,14 +101,8 @@ func (b *Bucket) Push(items []item.Item) error {
 		return fmt.Errorf("push: log: %w", err)
 	}
 
-	maxSkew := int(b.opts.MaxSkew)
-	skewLoc, skews := b.idx.Set(loc, maxSkew)
-	if skews == maxSkew {
-		// at least warn user since this might lead to lost data:
-		b.opts.Logger.Printf("push: maximum skew was reached (key=%v skew=%d)", loc.Key, b.opts.MaxSkew)
-	}
-
-	if err := b.idxLog.Push(skewLoc); err != nil {
+	b.idx.Set(loc)
+	if err := b.idxLog.Push(loc); err != nil {
 		return fmt.Errorf("push: index-log: %w", err)
 	}
 
@@ -186,23 +177,13 @@ func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, int, error) {
 		// next entry in the index needs to be taken into account for the next
 		// iteration. For this we compare the next index entry to the
 		// supposedly next batch value.
-		for !indexExhausted {
+		if !indexExhausted {
 			nextLoc := idxIter.Value()
-
-			// Push might "skew" the key of the index by adding an offset to the key
-			// so we can efficiently store it. This offset will show up in nextLoc.Key
-			// and might lead to the odd situation that location's key is higher than the
-			// item key. We have to load all iterators up to diff of MaxSkew to be sure that
-			// we iterate in the correct order.
-			keyDiff := nextLoc.Key - nextItem.Key
-			if (*batchIters)[0].Exhausted() || keyDiff <= item.Key(b.opts.MaxSkew) {
+			if (*batchIters)[0].Exhausted() || nextLoc.Key <= nextItem.Key {
 				indexExhausted, err = b.addPopIter(batchIters, &idxIter)
 				if err != nil {
 					return dst, 0, err
 				}
-
-			} else {
-				break
 			}
 		}
 
@@ -222,7 +203,7 @@ func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, int, error) {
 
 			// some keys were take from it, but not all (or none)
 			// we need to adjust the index to keep those reachable.
-			b.idx.Set(currLoc, int(b.opts.MaxSkew))
+			b.idx.Set(currLoc)
 			if err := b.idxLog.Push(currLoc); err != nil {
 				return dst, 0, fmt.Errorf("idxlog: append begun: %w", err)
 			}
@@ -289,7 +270,7 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 				Key: partialItem.Key,
 				Off: partialLoc.Off,
 				Len: partialLoc.Len,
-			}, int(b.opts.MaxSkew))
+			})
 			numDeleted += int(loc.Len - partialLoc.Len)
 		} else {
 			// nothing found, this index entry can be dropped.
@@ -327,6 +308,7 @@ func (b *Bucket) Len() int {
 	size := 0
 	iter := b.idx.Iter()
 	for iter.Next() {
+		fmt.Println(iter.Value())
 		size += int(iter.Value().Len)
 	}
 

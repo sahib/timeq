@@ -25,7 +25,7 @@ func TestIter(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, loc, item.Location{
 		Key: 10,
-		Off: itemHeaderSize*10 + 10,
+		Off: ItemHeaderSize*10 + 10,
 		Len: 10,
 	})
 
@@ -44,7 +44,7 @@ func TestIter(t *testing.T) {
 		currLoc := iter.CurrentLocation()
 		require.Equal(t, item.Location{
 			Key: item.Key(count + 10),
-			Off: item.Off(itemHeaderSize*10 + 10 + count*(itemHeaderSize+2)),
+			Off: item.Off(ItemHeaderSize*10 + 10 + count*(ItemHeaderSize+2)),
 			Len: item.Off(10 - count),
 		}, currLoc)
 		count++

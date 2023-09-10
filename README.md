@@ -87,7 +87,7 @@ BenchmarkPushSyncFull-16     	  19994	    59491 ns/op	     72 B/op	      2 alloc
   items as popped. The data stays intact in the data WAL.
 * Once a bucket was completely drained it is removed from disk to retain space.
 
-Since the index is quite small (only one entry per batch) we can fit in memory.
+Since the index is quite small (only one entry per batch) we can fit it in memory.
 On the initial load all bucket indexes are loaded, but no memory is mapped yet.
 
 ## FAQ:
@@ -101,18 +101,22 @@ in mind that timestamps were the idea behind the original design, so your
 mileage may vary - always benchmark your individual usecase. You can modify one
 of the existing benchmarks to test your assumptions.
 
+### Why should I care about buckets?
+
+If one bucket becomes corrupt for some reason, you loose only the data in this bucket.
+Also buckets cannot grow over 4GB due to the offset being 32-bit values. Additionally,
+only the values in the accessed buckets are memory-mapped.
+
+Future versions might load only the index of the buckets that you actually access.
+For now, this is not implemented as the indexes are very small and functions like
+``Len()`` need the index loaded.
+
 ### Can I store more than one value per key?
 
-Yes, you can. This is not a workload `timeq` is optimized for though. Some background:
-The index stores only one priority key per batch. If a batch with the same key was inserted,
-we could restructure the index to allow more than location per key. This would however introduce
-allocations for every index entry and make the general handling more complicated.
-
-As the duplicate case is considered to be an exception from the rule (assuming
-unix-epoch based workloads) ``timeq`` goes with "skewing" the key of the
-duplicated batch a little by incrementing it until a free place in the index
-was found. This is the reason why ``Push()`` performance will slow down a bit
-if you insert a lot duplicated keys.
+Yes, you can. The index may store more than one batch per key. There is a
+slight allocation overhead though on ``Queue.Push()`` though. Since ``timeq``
+was mostly optimized for mostly-unique keys (i.e. timestamps) you might see
+better performance with less duplicates.
 
 If you want to use priority keys that are in a very narrow range (thus many
 duplicates) then you can think about spreading the range a bit wider.
@@ -123,10 +127,12 @@ and shift the priority: ``(prio << 32) | jobID``.
 
 ### How failsafe is ``timeq``?
 
-Time will tell. I use it on a big fleet of embedded devices in the field
-without issue. Design wise, damaged index files can be regenerated from the
-data log. There's no error correction code applied in the data log and no
-checksums are currently written. If you need this, I'm happy if a PR comes in.
+Time will tell. I intend to use it on a big fleet of embedded devices in the
+field. Design wise, damaged index files can be regenerated from the data log.
+There's no error correction code applied in the data log and no checksums are
+currently written. If you need this, I'm happy if a PR comes in.
+
+TODO: Describe how timeq is tested (small code base, coverage, fuzz tests)
 
 ## License
 
@@ -144,3 +150,4 @@ Chris Pahl [@sahib](https://github.com/sahib)
 - [ ] Profile and optimize a bit more, if possible.
 - [ ] Use a configurable logger for warnings
 - [ ] We crash currently when running out of space.
+- [ ] Figure out error handling. If a bucket is unreadable, fail or continue?

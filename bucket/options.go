@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 )
 
 type SyncMode int
@@ -42,11 +41,6 @@ func DefaultLogger() Logger {
 
 // Options are fine-tuning knobs specific to individual buckets
 type Options struct {
-	// MaxSkew defines how much a key may be shifted in case of duplicates.
-	// This can lead to very small inaccuracies. Zero disables this.
-	// Default is 1us is plenty time to shift a key
-	MaxSkew time.Duration
-
 	// SyncMode controls how often we sync data to the disk. The more data we sync
 	// the more durable is the queue at the cost of throughput.
 	// Default is the safe SyncFull. Think twice before lowering this.
@@ -60,7 +54,6 @@ type Options struct {
 // DefaultOptions returns sane options you can start with
 func DefaultOptions() Options {
 	return Options{
-		MaxSkew:  time.Microsecond,
 		SyncMode: SyncFull,
 		Logger:   DefaultLogger(),
 	}

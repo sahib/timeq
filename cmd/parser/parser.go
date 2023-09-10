@@ -16,7 +16,6 @@ import (
 
 func optionsFromCtx(ctx *cli.Context) (timeq.Options, error) {
 	opts := timeq.DefaultOptions()
-	opts.MaxSkew = ctx.GlobalDuration("max-skew")
 
 	switch mode := ctx.GlobalString("sync-mode"); mode {
 	case "full":
@@ -89,12 +88,6 @@ func Run(args []string) error {
 			Usage:  "Path to storage directory (defaults to curent working dir)",
 			EnvVar: "TIMEQ_DIR",
 			Value:  cwd,
-		},
-		cli.DurationFlag{
-			Name:   "max-skew",
-			Usage:  "Max skew of timestamps in case of duplicated batches",
-			EnvVar: "TIMEQ_MAX_SKEW",
-			Value:  time.Millisecond,
 		},
 		cli.StringFlag{
 			Name:   "sync-mode",
@@ -191,7 +184,6 @@ func handlePop(ctx *cli.Context, q *timeq.Queue) error {
 		return err
 	}
 
-	fmt.Println("----")
 	for _, item := range items {
 		fmt.Println(item)
 	}

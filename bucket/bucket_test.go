@@ -1,6 +1,7 @@
 package bucket
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -213,6 +214,7 @@ func TestPushDuplicates(t *testing.T) {
 		const pushes = 100
 		expItems := testutils.GenItems(0, 10, 1)
 		for idx := 0; idx < pushes; idx++ {
+			fmt.Println("----")
 			require.NoError(t, bucket.Push(expItems))
 			require.Equal(t, (idx+1)*len(expItems), bucket.Len())
 		}

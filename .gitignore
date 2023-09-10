@@ -1,2 +1,4 @@
 timeq
-cov.out
+*.out
+*.pprof
+*.test
