@@ -32,6 +32,12 @@ func (li *LogIter) Next(itDst *item.Item) bool {
 		return false
 	}
 
+	if len(li.item.Blob) == 0 {
+		// this can happen at the very end of the log:
+		li.exhausted = true
+		return false
+	}
+
 	li.prevOff = li.currOff
 	li.prevLen = li.currLen
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/sahib/timeq/item"
 	"golang.org/x/sys/unix"
@@ -70,6 +71,21 @@ func (l *Log) init() error {
 		return nil
 	}
 
+	// Setting this allows us to handle mmap() errors gracefully.
+	// The typical scenario where those errors happen, are full filesystems.
+	// This can happen like this:
+	//
+	// * ftruncate() grows a file beyond the available space without error.
+	//   Since the new "space" are just zeros that do not take any physical
+	//   space this makes sense.
+	// * Accessing this mapped memory however will cause the filesystem to actually
+	//   try to serve some more pages, which fails as it's full (would also happen on
+	//   hardware failure or similar)
+	// * This causes a SIGBUS to be send to our process. By default Go crashes the program
+	//   and prints a stack trace. Changing this to a recoverable panic allows us to intervene
+	//   and continue execution with a proper error return.
+	debug.SetPanicOnFault(true)
+
 	flags := os.O_APPEND | os.O_CREATE | os.O_RDWR
 	fd, err := os.OpenFile(l.path, flags, 0600)
 	if err != nil {
@@ -88,6 +104,7 @@ func (l *Log) init() error {
 		if err := fd.Truncate(mmapSize); err != nil {
 			return fmt.Errorf("truncate: %w", err)
 		}
+
 	}
 
 	mmap, err := unix.Mmap(
@@ -102,6 +119,9 @@ func (l *Log) init() error {
 		fd.Close()
 		return fmt.Errorf("log: mmap: %w", err)
 	}
+
+	// give OS a hint that we will likely need that memory soon:
+	unix.Madvise(mmap, unix.MADV_WILLNEED)
 
 	l.size = info.Size()
 	l.fd = fd
@@ -151,17 +171,24 @@ func (l *Log) writeItem(item item.Item) {
 	copy(l.mmap[l.size+ItemHeaderSize:], item.Blob)
 }
 
-func (l *Log) Push(items []item.Item) (item.Location, error) {
-	if err := l.init(); err != nil {
-		return item.Location{}, err
+func (l *Log) Push(items []item.Item) (loc item.Location, err error) {
+	if err = l.init(); err != nil {
+		return
 	}
+
+	defer func() {
+		// See comment in init()
+		if recErr := recover(); recErr != nil {
+			err = fmt.Errorf("panic (do you have enough space left?): %v", recErr)
+		}
+	}()
 
 	addSize := len(items) * ItemHeaderSize
 	for i := 0; i < len(items); i++ {
 		addSize += len(items[i].Blob)
 	}
 
-	loc := item.Location{
+	loc = item.Location{
 		Key: items[0].Key,
 		Off: item.Off(l.size),
 		Len: item.Off(len(items)),
@@ -172,22 +199,23 @@ func (l *Log) Push(items []item.Item) (item.Location, error) {
 		if nextMmapSize > int64(^item.Off(0)) {
 			// the mmap size is bigger than what our offsets can handle.
 			// we have to error out.
-			return item.Location{}, fmt.Errorf("wal-file bigger than 4GB")
+			err = fmt.Errorf("wal-file bigger than 4GB")
+			return
 		}
 
 		// currently mmapped region does not suffice,
 		// allocate more space for it.
-		if err := l.fd.Truncate(nextMmapSize); err != nil {
-			return item.Location{}, fmt.Errorf("truncate: %w", err)
+		if err = l.fd.Truncate(nextMmapSize); err != nil {
+			err = fmt.Errorf("truncate: %w", err)
+			return
 		}
 
 		// If we're unlucky we gonna have to move it:
-		m, err := unix.Mremap(l.mmap, int(nextMmapSize), unix.MREMAP_MAYMOVE)
+		l.mmap, err = unix.Mremap(l.mmap, int(nextMmapSize), unix.MREMAP_MAYMOVE)
 		if err != nil {
-			return item.Location{}, fmt.Errorf("remap: %w", err)
+			err = fmt.Errorf("remap: %w", err)
+			return
 		}
-
-		l.mmap = m
 	}
 
 	// copy the items to the file map:
@@ -196,8 +224,9 @@ func (l *Log) Push(items []item.Item) (item.Location, error) {
 		l.size += int64(ItemHeaderSize + len(items[i].Blob))
 	}
 
-	if err := l.Sync(false); err != nil {
-		return item.Location{}, fmt.Errorf("sync: %w", err)
+	if err = l.Sync(false); err != nil {
+		err = fmt.Errorf("sync: %w", err)
+		return
 	}
 
 	return loc, nil
@@ -216,9 +245,19 @@ func (l *Log) At(loc item.Location) (LogIter, error) {
 	}, nil
 }
 
-func (l *Log) readItemAt(off item.Off, it *item.Item) error {
+func (l *Log) readItemAt(off item.Off, it *item.Item) (err error) {
+	defer func() {
+		// See comment in init()
+		if recErr := recover(); recErr != nil {
+			err = fmt.Errorf("panic (do you have enough space left?): %v", recErr)
+		}
+	}()
+
 	if int64(off)+ItemHeaderSize >= l.size {
-		return fmt.Errorf("log: bad offset: off=%d size=%d (header too big)", off, l.size)
+		// NOTE: This migh happen in valid cases: i.e. when the initial size is determined we iterate
+		// until the end of the WAL. If the last item happens to be cut off we would throw an error
+		// here. In this case we just want to stop iterating.
+		return nil
 	}
 
 	// parse header:

@@ -53,6 +53,7 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 		return nil, fmt.Errorf("read-dir: %w", err)
 	}
 
+	var dirsHandled int
 	tree := btree.Map[item.Key, *Bucket]{}
 	for _, ent := range ents {
 		if !ent.IsDir() {
@@ -62,7 +63,8 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 		buckPath := filepath.Join(dir, ent.Name())
 		key, err := item.KeyFromString(filepath.Base(buckPath))
 		if err != nil {
-			return nil, err
+			opts.Logger.Printf("failed to parse %s as bucket path\n", buckPath)
+			continue
 		}
 
 		// NOTE: This is intentionally kept simple. There is no size marker or
@@ -73,6 +75,7 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 		// - Len() needs some way to also report unloaded bucket size
 		// - ByKey() and Iter() need to load not yet loaded buckets.
 		buck, wasDeleted, err := loadAndDeleteBucketIfEmpty(buckPath, opts)
+		dirsHandled++
 		if err != nil {
 			return nil, fmt.Errorf("load-or-delete: %w", err)
 		} else if wasDeleted {
@@ -81,6 +84,11 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 
 		// nil entries indicate buckets that were not loaded yet:
 		tree.Set(key, buck)
+	}
+
+	if dirsHandled == 0 && len(ents) > 0 {
+		return nil, fmt.Errorf("%s is not empty; refusing to create db", dir)
+
 	}
 
 	return &Buckets{
