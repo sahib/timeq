@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 
 	"github.com/sahib/timeq/index"
@@ -23,10 +24,32 @@ type Bucket struct {
 	opts   Options
 }
 
-func Open(dir string, opts Options) (*Bucket, error) {
+func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
+
+	// Setting this allows us to handle mmap() errors gracefully.
+	// The typical scenario where those errors happen, are full filesystems.
+	// This can happen like this:
+	//
+	// * ftruncate() grows a file beyond the available space without error.
+	//   Since the new "space" are just zeros that do not take any physical
+	//   space this makes sense.
+	// * Accessing this mapped memory however will cause the filesystem to actually
+	//   try to serve some more pages, which fails as it's full (would also happen on
+	//   hardware failure or similar)
+	// * This causes a SIGBUS to be send to our process. By default Go crashes the program
+	//   and prints a stack trace. Changing this to a recoverable panic allows us to intervene
+	//   and continue execution with a proper error return.
+	debug.SetPanicOnFault(true)
+
+	defer func() {
+		// See comment in init()
+		if recErr := recover(); recErr != nil {
+			outErr = fmt.Errorf("panic (do you have enough space left?): %v", recErr)
+		}
+	}()
 
 	log := vlog.Open(filepath.Join(dir, "dat.log"), opts.SyncMode&SyncData > 0)
 	idxPath := filepath.Join(dir, "idx.log")
@@ -86,10 +109,17 @@ func (b *Bucket) Close() error {
 }
 
 // Push expects pre-sorted items!
-func (b *Bucket) Push(items []item.Item) error {
+func (b *Bucket) Push(items []item.Item) (outErr error) {
 	if len(items) == 0 {
 		return nil
 	}
+
+	defer func() {
+		// See comment in Open()
+		if recErr := recover(); recErr != nil {
+			outErr = fmt.Errorf("panic (do you have enough space left?): %v", recErr)
+		}
+	}()
 
 	// TODO: locking would only be needed when modifying the index?
 	//       all attributes of bucket itself are not modified after Open.
@@ -126,11 +156,18 @@ func (b *Bucket) addPopIter(batchIters *vlog.LogIters, idxIter *index.Iter) (boo
 	return !idxIter.Next(), nil
 }
 
-func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, int, error) {
+func (b *Bucket) Pop(n int, dst []item.Item) (outItems []item.Item, npopped int, outErr error) {
 	if n <= 0 {
 		// technically that's a valid usecase.
 		return dst, 0, nil
 	}
+
+	defer func() {
+		// See comment in Open()
+		if recErr := recover(); recErr != nil {
+			outErr = fmt.Errorf("panic (do you have enough space left?): %v", recErr)
+		}
+	}()
 
 	b.mu.Lock()
 	defer b.mu.Unlock()

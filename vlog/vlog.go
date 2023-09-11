@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"runtime/debug"
 
 	"github.com/sahib/timeq/item"
 	"golang.org/x/sys/unix"
@@ -70,21 +69,6 @@ func (l *Log) init() error {
 	if len(l.mmap) > 0 {
 		return nil
 	}
-
-	// Setting this allows us to handle mmap() errors gracefully.
-	// The typical scenario where those errors happen, are full filesystems.
-	// This can happen like this:
-	//
-	// * ftruncate() grows a file beyond the available space without error.
-	//   Since the new "space" are just zeros that do not take any physical
-	//   space this makes sense.
-	// * Accessing this mapped memory however will cause the filesystem to actually
-	//   try to serve some more pages, which fails as it's full (would also happen on
-	//   hardware failure or similar)
-	// * This causes a SIGBUS to be send to our process. By default Go crashes the program
-	//   and prints a stack trace. Changing this to a recoverable panic allows us to intervene
-	//   and continue execution with a proper error return.
-	debug.SetPanicOnFault(true)
 
 	flags := os.O_APPEND | os.O_CREATE | os.O_RDWR
 	fd, err := os.OpenFile(l.path, flags, 0600)
@@ -176,13 +160,6 @@ func (l *Log) Push(items []item.Item) (loc item.Location, err error) {
 		return
 	}
 
-	defer func() {
-		// See comment in init()
-		if recErr := recover(); recErr != nil {
-			err = fmt.Errorf("panic (do you have enough space left?): %v", recErr)
-		}
-	}()
-
 	addSize := len(items) * ItemHeaderSize
 	for i := 0; i < len(items); i++ {
 		addSize += len(items[i].Blob)
@@ -246,13 +223,6 @@ func (l *Log) At(loc item.Location) (LogIter, error) {
 }
 
 func (l *Log) readItemAt(off item.Off, it *item.Item) (err error) {
-	defer func() {
-		// See comment in init()
-		if recErr := recover(); recErr != nil {
-			err = fmt.Errorf("panic (do you have enough space left?): %v", recErr)
-		}
-	}()
-
 	if int64(off)+ItemHeaderSize >= l.size {
 		// NOTE: This migh happen in valid cases: i.e. when the initial size is determined we iterate
 		// until the end of the WAL. If the last item happens to be cut off we would throw an error
