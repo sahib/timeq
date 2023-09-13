@@ -44,12 +44,7 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 	//   and continue execution with a proper error return.
 	debug.SetPanicOnFault(true)
 
-	defer func() {
-		// See comment in init()
-		if recErr := recover(); recErr != nil {
-			outErr = fmt.Errorf("panic (do you have enough space left?): %v", recErr)
-		}
-	}()
+	defer recoverMmapError(&outErr)
 
 	log := vlog.Open(filepath.Join(dir, "dat.log"), opts.SyncMode&SyncData > 0)
 	idxPath := filepath.Join(dir, "idx.log")
@@ -108,18 +103,20 @@ func (b *Bucket) Close() error {
 	)
 }
 
+func recoverMmapError(dstErr *error) {
+	// See comment in Open()
+	if recErr := recover(); recErr != nil {
+		*dstErr = fmt.Errorf("panic (do you have enough space left?): %v", recErr)
+	}
+}
+
 // Push expects pre-sorted items!
 func (b *Bucket) Push(items []item.Item) (outErr error) {
 	if len(items) == 0 {
 		return nil
 	}
 
-	defer func() {
-		// See comment in Open()
-		if recErr := recover(); recErr != nil {
-			outErr = fmt.Errorf("panic (do you have enough space left?): %v", recErr)
-		}
-	}()
+	defer recoverMmapError(&outErr)
 
 	// TODO: locking would only be needed when modifying the index?
 	//       all attributes of bucket itself are not modified after Open.
@@ -162,12 +159,7 @@ func (b *Bucket) Pop(n int, dst []item.Item) (outItems []item.Item, npopped int,
 		return dst, 0, nil
 	}
 
-	defer func() {
-		// See comment in Open()
-		if recErr := recover(); recErr != nil {
-			outErr = fmt.Errorf("panic (do you have enough space left?): %v", recErr)
-		}
-	}()
+	defer recoverMmapError(&outErr)
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
