@@ -19,12 +19,14 @@ func TestLogOpenUnaligned(t *testing.T) {
 		0x0, 0x0, 0x0, 0x1, // size=1
 		0x0, 0x0, 0x0, 0x0,
 		0x0, 0x0, 0x0, 0xF, // key=15
+		0xFF,
 	}
 
 	logPath := filepath.Join(tmpDir, "log")
 	require.NoError(t, os.WriteFile(logPath, fakeBlob, 0600))
 
-	log := Open(logPath, true)
+	log, err := Open(logPath, true)
+	require.NoError(t, err)
 	require.NoError(t, log.Close())
 }
 
@@ -33,7 +35,8 @@ func TestLogOpenEmpty(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	log := Open(filepath.Join(tmpDir, "log"), true)
+	log, err := Open(filepath.Join(tmpDir, "log"), true)
+	require.NoError(t, err)
 	require.NoError(t, log.Close())
 }
 
@@ -42,7 +45,8 @@ func TestLogOpenPushRead(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	log := Open(filepath.Join(tmpDir, "log"), true)
+	log, err := Open(filepath.Join(tmpDir, "log"), true)
+	require.NoError(t, err)
 	loc, err := log.Push(testutils.GenItems(1, 2, 1))
 	require.NoError(t, err)
 	require.Equal(t, loc, item.Location{
@@ -58,5 +62,44 @@ func TestLogOpenPushRead(t *testing.T) {
 		Blob: []byte("1"),
 	}, it)
 
+	require.NoError(t, log.Close())
+}
+
+func TestLogShrink(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "timeq-vlogtest")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	log, err := Open(filepath.Join(tmpDir, "log"), true)
+	require.NoError(t, err)
+	firstLoc, err := log.Push(testutils.GenItems(1, 2, 1))
+	require.NoError(t, err)
+	require.NoError(t, log.Close())
+
+	// re-open:
+	log, err = Open(filepath.Join(tmpDir, "log"), true)
+	require.NoError(t, err)
+
+	sndLoc, err := log.Push(testutils.GenItems(2, 3, 1))
+	require.NoError(t, err)
+
+	var it item.Item
+	iter := log.At(firstLoc)
+	require.True(t, iter.Next(&it))
+	require.Equal(t, item.Item{
+		Key:  1,
+		Blob: []byte("1"),
+	}, it)
+	require.False(t, iter.Next(&it))
+
+	iter = log.At(sndLoc)
+	require.True(t, iter.Next(&it))
+	require.Equal(t, item.Item{
+		Key:  2,
+		Blob: []byte("2"),
+	}, it)
+	require.False(t, iter.Next(&it))
+
+	require.NoError(t, iter.Err())
 	require.NoError(t, log.Close())
 }

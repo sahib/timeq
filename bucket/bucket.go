@@ -46,7 +46,11 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 
 	defer recoverMmapError(&outErr)
 
-	log := vlog.Open(filepath.Join(dir, "dat.log"), opts.SyncMode&SyncData > 0)
+	log, err := vlog.Open(filepath.Join(dir, "dat.log"), opts.SyncMode&SyncData > 0)
+	if err != nil {
+		return nil, fmt.Errorf("open: %w", err)
+	}
+
 	idxPath := filepath.Join(dir, "idx.log")
 	idx, err := index.Load(idxPath)
 	if err != nil {
@@ -129,7 +133,7 @@ func (b *Bucket) Push(items []item.Item) (outErr error) {
 	}
 
 	b.idx.Set(loc)
-	if err := b.idxLog.Push(loc); err != nil {
+	if err := b.idxLog.Push(loc, b.idx.Trailer()); err != nil {
 		return fmt.Errorf("push: index-log: %w", err)
 	}
 
@@ -139,11 +143,7 @@ func (b *Bucket) Push(items []item.Item) (outErr error) {
 // addPopIter adds a new batchIter to `batchIters` and advances the idxIter.
 func (b *Bucket) addPopIter(batchIters *vlog.LogIters, idxIter *index.Iter) (bool, error) {
 	loc := idxIter.Value()
-	batchIter, err := b.log.At(loc)
-	if err != nil {
-		return false, err
-	}
-
+	batchIter := b.log.At(loc)
 	if !batchIter.Next(nil) {
 		// might be empty or I/O error:
 		return false, batchIter.Err()
@@ -233,21 +233,20 @@ func (b *Bucket) Pop(n int, dst []item.Item) (outItems []item.Item, npopped int,
 			// some keys were take from it, but not all (or none)
 			// we need to adjust the index to keep those reachable.
 			b.idx.Set(currLoc)
-			if err := b.idxLog.Push(currLoc); err != nil {
+
+			if err := b.idxLog.Push(currLoc, b.idx.Trailer()); err != nil {
 				return dst, 0, fmt.Errorf("idxlog: append begun: %w", err)
 			}
 		}
 
+		// Make sure the previous batch index entry gets deleted:
 		b.idx.Delete(batchIter.FirstKey())
-
-		// this batch was fullly exhausted during Pop()
-		// mark it as such in the index-wal:
 		deadLoc := item.Location{
 			Key: batchIter.FirstKey(),
 			Len: 0,
 			Off: 0,
 		}
-		if err := b.idxLog.Push(deadLoc); err != nil {
+		if err := b.idxLog.Push(deadLoc, b.idx.Trailer()); err != nil {
 			return dst, 0, fmt.Errorf("idxlog: append begun: %w", err)
 		}
 	}
@@ -278,11 +277,7 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 		var partialItem item.Item
 		var partialLoc item.Location
 
-		logIter, err := b.log.At(loc)
-		if err != nil {
-			return numDeleted, err
-		}
-
+		logIter := b.log.At(loc)
 		for logIter.Next(&partialItem) {
 			if partialItem.Key >= key {
 				partialFound = true

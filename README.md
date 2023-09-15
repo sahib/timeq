@@ -103,13 +103,13 @@ of the existing benchmarks to test your assumptions.
 
 ### Why should I care about buckets?
 
-If one bucket becomes corrupt for some reason, you loose only the data in this bucket.
-Also buckets cannot grow over 4GB due to the offset being 32-bit values. Additionally,
-only the values in the accessed buckets are memory-mapped.
+Most improtantly: Only the buckets are loaded that are actually used.
+This let's the memory requirement of `timeq` be extremely small.
 
-Future versions might load only the index of the buckets that you actually access.
-For now, this is not implemented as the indexes are very small and functions like
-``Len()`` need the index loaded.
+There are also some other reasons:
+
+* If one bucket becomes corrupt for some reason, you loose only the data in this bucket.
+* Buckets cannot grow over 4GB due to the offsets being 32-bit values.
 
 ### Can I store more than one value per key?
 

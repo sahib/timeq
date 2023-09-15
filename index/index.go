@@ -10,8 +10,8 @@ import (
 
 // Index is an in-memory representation of the batch index as b-tree structure.
 type Index struct {
-	m     btree.Map[item.Key, []item.Location]
-	nlocs int
+	m        btree.Map[item.Key, []item.Location]
+	nentries item.Off
 }
 
 // FromVlog produces an index from the data in the value log. It's
@@ -21,14 +21,10 @@ type Index struct {
 func FromVlog(log *vlog.Log) (*Index, error) {
 	// we're cheating a little here by trusting the iterator
 	// to go not over the end, even if the Len is bogus.
-	iter, err := log.At(item.Location{
+	iter := log.At(item.Location{
 		Off: 0,
 		Len: ^item.Off(0),
 	})
-
-	if err != nil {
-		return nil, err
-	}
 
 	index := &Index{}
 
@@ -98,16 +94,17 @@ func Load(path string) (*Index, error) {
 func (i *Index) Set(loc item.Location) (item.Location, int) {
 	oldLocs, _ := i.m.Get(loc.Key)
 	i.m.Set(loc.Key, append(oldLocs, loc))
-	i.nlocs++
+	i.nentries += loc.Len
 	return loc, 0
 }
 
 func (i *Index) Delete(key item.Key) {
 	oldLocs, ok := i.m.Get(key)
-	if ok {
-		i.nlocs--
+	if !ok {
+		return
 	}
 
+	i.nentries -= oldLocs[0].Len
 	if len(oldLocs) > 1 {
 		// delete one of the keys:
 		i.m.Set(key, oldLocs[1:])
@@ -117,8 +114,16 @@ func (i *Index) Delete(key item.Key) {
 	i.m.Delete(key)
 }
 
-func (i *Index) Len() int {
-	return i.nlocs
+// Len returns the number of items in the WAL.
+// (Not the number of locations or batches!)
+func (i *Index) Len() item.Off {
+	return i.nentries
+}
+
+func (i *Index) Trailer() Trailer {
+	return Trailer{
+		TotalEntries: i.nentries,
+	}
 }
 
 ////////////

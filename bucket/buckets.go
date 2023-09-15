@@ -7,40 +7,17 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/sahib/timeq/index"
 	"github.com/sahib/timeq/item"
 	"github.com/tidwall/btree"
 )
 
 type Buckets struct {
-	mu   sync.Mutex
-	dir  string
-	tree btree.Map[item.Key, *Bucket]
-	opts Options
-}
-
-func loadAndDeleteBucketIfEmpty(buckPath string, opts Options) (*Bucket, bool, error) {
-	// NOTE: If you have a lot of buckets this would take a bit of time.
-	// However, it's simple, stupid and works. If one needs to do better
-	// we could write some marker to the bucket that quickly tells us if
-	// the bucket is empty.
-	buck, err := Open(buckPath, opts)
-	if err != nil {
-		return nil, false, err
-	}
-
-	if !buck.Empty() {
-		return buck, false, nil
-	}
-
-	if err := buck.Close(); err != nil {
-		return nil, false, err
-	}
-
-	if err := os.RemoveAll(buckPath); err != nil {
-		return nil, false, err
-	}
-
-	return nil, true, nil
+	mu       sync.Mutex
+	dir      string
+	tree     btree.Map[item.Key, *Bucket]
+	trailers map[item.Key]index.Trailer
+	opts     Options
 }
 
 func LoadAll(dir string, opts Options) (*Buckets, error) {
@@ -55,6 +32,7 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 
 	var dirsHandled int
 	tree := btree.Map[item.Key, *Bucket]{}
+	trailers := make(map[item.Key]index.Trailer, len(ents))
 	for _, ent := range ents {
 		if !ent.IsDir() {
 			continue
@@ -64,26 +42,31 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 		key, err := item.KeyFromString(filepath.Base(buckPath))
 		if err != nil {
 			opts.Logger.Printf("failed to parse %s as bucket path\n", buckPath)
+			// TODO: should be optionable to error here.
 			continue
 		}
 
-		// NOTE: This is intentionally kept simple. There is no size marker or
-		// similar to hint deleting a bucket without loading it first. This
-		// means that we have to load all buckets on startup, occupying some
-		// memory. If you think about optimizing this, you have to consider:
-		//
-		// - Len() needs some way to also report unloaded bucket size
-		// - ByKey() and Iter() need to load not yet loaded buckets.
-		buck, wasDeleted, err := loadAndDeleteBucketIfEmpty(buckPath, opts)
 		dirsHandled++
+
+		trailer, err := index.ReadTrailer(filepath.Join(buckPath, "idx.log"))
 		if err != nil {
-			return nil, fmt.Errorf("load-or-delete: %w", err)
-		} else if wasDeleted {
+			opts.Logger.Printf("failed to read trailer: %v", err)
+			// TODO: bring back error mode to ignore bad buckets here.
+			continue
+		}
+
+		if trailer.TotalEntries == 0 {
+			// It's an empty bucket. Delete it.
+			if err := os.RemoveAll(buckPath); err != nil {
+				return nil, err
+			}
+
 			continue
 		}
 
 		// nil entries indicate buckets that were not loaded yet:
-		tree.Set(key, buck)
+		trailers[key] = trailer
+		tree.Set(key, nil)
 	}
 
 	if dirsHandled == 0 && len(ents) > 0 {
@@ -92,9 +75,10 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 	}
 
 	return &Buckets{
-		dir:  dir,
-		tree: tree,
-		opts: opts,
+		dir:      dir,
+		tree:     tree,
+		opts:     opts,
+		trailers: trailers,
 	}, nil
 }
 
@@ -109,6 +93,10 @@ func (bs *Buckets) ForKey(key item.Key) (*Bucket, error) {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 
+	return bs.forKey(key)
+}
+
+func (bs *Buckets) forKey(key item.Key) (*Bucket, error) {
 	buck, _ := bs.tree.Get(key)
 	if buck != nil {
 		// fast path:
@@ -152,32 +140,63 @@ func (bs *Buckets) delete(key item.Key) error {
 	)
 }
 
+type IterMode int
+
+const (
+	// IncludeNil goes over all buckets, including those that are nil (not loaded.)
+	IncludeNil = iota
+
+	// LoadedOnly iterates over all buckets that were loaded already.
+	LoadedOnly
+
+	// Load loads buckets that were not loaded yet.
+	Load
+)
+
 // IterStop can be returned in Iter's func when you want to stop
 // It does not count as error.
 var IterStop = errors.New("iteration stopped")
 
-func (bs *Buckets) Iter(fn func(b *Bucket) error) error {
+// Iter iterats over all buckets, starting with the lowest. The buckets include
+// unloaded depending on `mode`. The error you return in `fn` will be returned
+// by Iter() and iteration immediately stops. If you return IterStop then
+// Iter() will return nil and will also stop the iteration.
+func (bs *Buckets) Iter(mode IterMode, fn func(key item.Key, b *Bucket) error) error {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 
 	var err error
 	bs.tree.Scan(func(key item.Key, buck *Bucket) bool {
-		if err = fn(buck); err != nil {
+		if buck == nil {
+			if mode == LoadedOnly {
+				return true
+			}
+
+			if mode == Load {
+				// load the bucket fresh from disk:
+				buck, err = bs.forKey(key)
+				if err != nil {
+					return false
+				}
+			}
+		}
+
+		if err = fn(key, buck); err != nil {
 			if err == IterStop {
 				err = nil
 			}
 
 			return false
 		}
+
 		return true
 	})
 	return err
 }
 
 func (bs *Buckets) Sync() error {
-	// TOOD: sync syncs all buckets currently and opens some newly
 	var err error
-	_ = bs.Iter(func(b *Bucket) error {
+	_ = bs.Iter(LoadedOnly, func(_ item.Key, b *Bucket) error {
 		// try to sync as much as possible:
 		err = errors.Join(err, b.Sync(true))
 		return nil
@@ -201,14 +220,25 @@ func (bs *Buckets) Clear() error {
 }
 
 func (bs *Buckets) Close() error {
-	return bs.Iter(func(b *Bucket) error {
+	return bs.Iter(LoadedOnly, func(_ item.Key, b *Bucket) error {
 		return b.Close()
 	})
 }
 
 func (bs *Buckets) Len() int {
 	var len int
-	_ = bs.Iter(func(b *Bucket) error {
+	_ = bs.Iter(IncludeNil, func(key item.Key, b *Bucket) error {
+		if b == nil {
+			trailer, ok := bs.trailers[key]
+			if !ok {
+				bs.opts.Logger.Printf("bug: no trailer for %v", key)
+				return nil
+			}
+
+			len += int(trailer.TotalEntries)
+			return nil
+		}
+
 		len += b.Len()
 		return nil
 	})

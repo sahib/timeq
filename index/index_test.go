@@ -20,12 +20,14 @@ func TestIndexLoad(t *testing.T) {
 	w, err := NewWriter(indexPath, true)
 	require.NoError(t, err)
 
+	var lenCount item.Off
 	for idx := 0; idx < 10; idx++ {
 		require.NoError(t, w.Push(item.Location{
 			Key: item.Key(idx),
 			Off: item.Off(idx),
 			Len: item.Off(idx),
-		}))
+		}, Trailer{}))
+		lenCount += item.Off(idx)
 	}
 
 	require.NoError(t, w.Close())
@@ -45,7 +47,7 @@ func TestIndexLoad(t *testing.T) {
 		count++
 	}
 
-	require.Equal(t, 9, index.Len())
+	require.Equal(t, lenCount, index.Len())
 }
 
 func TestIndexSet(t *testing.T) {
@@ -62,7 +64,8 @@ func testIndexFromVlog(t *testing.T, pushes [][]item.Item, expLocs [][]item.Loca
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	log := vlog.Open(filepath.Join(tmpDir, "log"), true)
+	log, err := vlog.Open(filepath.Join(tmpDir, "log"), true)
+	require.NoError(t, err)
 	for _, push := range pushes {
 		_, err = log.Push(push)
 		require.NoError(t, err)
@@ -161,7 +164,7 @@ func TestIndexDuplicateSet(t *testing.T) {
 	}
 	index.Set(loc1)
 	index.Set(loc2)
-	require.Equal(t, 2, index.Len())
+	require.Equal(t, item.Off(24), index.Len())
 
 	var count int
 	for iter := index.Iter(); iter.Next(); count++ {
@@ -183,13 +186,13 @@ func TestIndexDuplicateSet(t *testing.T) {
 	require.True(t, iter.Next())
 	require.Equal(t, loc2, iter.Value())
 	require.False(t, iter.Next())
-	require.Equal(t, 1, index.Len())
+	require.Equal(t, item.Off(19), index.Len())
 
 	// check if deleting all of them works nicely:
 	index.Delete(10)
 	iter = index.Iter()
 	require.False(t, iter.Next())
-	require.Equal(t, 0, index.Len())
+	require.Equal(t, item.Off(0), index.Len())
 }
 
 func TestIndexNoCrashOnBadAPIUsage(t *testing.T) {

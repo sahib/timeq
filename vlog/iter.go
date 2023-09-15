@@ -42,7 +42,7 @@ func (li *LogIter) Next(itDst *item.Item) bool {
 	li.prevLen = li.currLen
 
 	// advance iter to next position:
-	li.currOff += item.Off(len(li.item.Blob) + ItemHeaderSize)
+	li.currOff += item.Off(len(li.item.Blob) + ItemHeaderSize + 1)
 	li.currLen--
 
 	if itDst != nil {

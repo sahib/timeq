@@ -158,7 +158,7 @@ func (q *Queue) Pop(n int, dst Items) (Items, error) {
 	// items we returned can cause a segfault immediately.
 
 	var count = n
-	err := q.buckets.Iter(func(b *bucket.Bucket) error {
+	err := q.buckets.Iter(bucket.Load, func(_ item.Key, b *bucket.Bucket) error {
 		newDst, popped, err := b.Pop(count, dst)
 		if err != nil {
 			return err
@@ -185,15 +185,20 @@ func (q *Queue) DeleteLowerThan(key Key) (int, error) {
 	var numDeleted int
 	var deletableBucks []*bucket.Bucket
 
-	err := q.buckets.Iter(func(bucket *bucket.Bucket) error {
-		numDeletedOfBucket, err := bucket.DeleteLowerThan(key)
+	err := q.buckets.Iter(bucket.IncludeNil, func(bucketKey item.Key, buck *bucket.Bucket) error {
+		if bucketKey >= key {
+			// stop loading buckets if not necessary.
+			return bucket.IterStop
+		}
+
+		numDeletedOfBucket, err := buck.DeleteLowerThan(key)
 		if err != nil {
 			return err
 		}
 
 		numDeleted += numDeletedOfBucket
-		if bucket.Empty() {
-			deletableBucks = append(deletableBucks, bucket)
+		if buck.Empty() {
+			deletableBucks = append(deletableBucks, buck)
 		}
 
 		return nil

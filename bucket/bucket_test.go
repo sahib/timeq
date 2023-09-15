@@ -241,3 +241,4 @@ func TestPushDuplicates(t *testing.T) {
 // - re-open tests:
 //   - bucket deleted?
 //   - popped items really gone?
+// - iter tests for buckets.

@@ -69,8 +69,9 @@ func TestBucketsIter(t *testing.T) {
 	require.NoError(t, err)
 
 	got := []item.Key{}
-	require.NoError(t, bs.Iter(func(b *Bucket) error {
+	require.NoError(t, bs.Iter(Load, func(key item.Key, b *Bucket) error {
 		got = append(got, b.Key())
+		require.Equal(t, key, b.Key())
 		return nil
 	}))
 

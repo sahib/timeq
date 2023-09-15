@@ -57,12 +57,13 @@ func nextSize(size int64) int64 {
 	return nextSize
 }
 
-func Open(path string, syncOnWrite bool) *Log {
-	return &Log{
+func Open(path string, syncOnWrite bool) (*Log, error) {
+	l := &Log{
 		// this will lazy-initialze on first access:
 		path:        path,
 		syncOnWrite: syncOnWrite,
 	}
+	return l, l.init()
 }
 
 func (l *Log) init() error {
@@ -88,7 +89,6 @@ func (l *Log) init() error {
 		if err := fd.Truncate(mmapSize); err != nil {
 			return fmt.Errorf("truncate: %w", err)
 		}
-
 	}
 
 	mmap, err := unix.Mmap(
@@ -105,7 +105,7 @@ func (l *Log) init() error {
 	}
 
 	// give OS a hint that we will likely need that memory soon:
-	unix.Madvise(mmap, unix.MADV_WILLNEED)
+	_ = unix.Madvise(mmap, unix.MADV_WILLNEED)
 
 	l.size = info.Size()
 	l.fd = fd
@@ -115,51 +115,31 @@ func (l *Log) init() error {
 	// pre-allocated the file to a certain length and we don't
 	// know much of it was used. If we would use info.Size() here
 	// we would waste some space since new pushes are written beyond
-	// the truncated area.
-
-	size, err := l.readActualSize()
-	if err != nil {
-		return fmt.Errorf("log: initial size: %w", err)
-	}
-
-	l.size = size
+	// the truncated area. Just shrink to the last written data.
+	l.size = l.shrink()
 	return nil
 }
 
-func (l *Log) readActualSize() (int64, error) {
-	iter := LogIter{
-		// we're cheating a little here by trusting the iterator
-		// to go not over the end, even if the Len is bogus.
-		currOff: 0,
-		currLen: ^item.Off(0),
-		log:     l,
+func (l *Log) shrink() int64 {
+	// shrink assumes that 1 byte is written after the
+	idx := l.size - 1
+	for ; idx >= 0 && l.mmap[idx] == 0; idx-- {
 	}
 
-	var size int64
-	var it item.Item
-	for iter.Next(&it) && len(it.Blob) > 0 {
-		size += int64(len(it.Blob)) + ItemHeaderSize
-	}
-
-	if err := iter.Err(); err != nil {
-		return 0, fmt.Errorf("size: %w", err)
-	}
-
-	return size, nil
-
+	return idx + 1
 }
 
 func (l *Log) writeItem(item item.Item) {
-	binary.BigEndian.PutUint32(l.mmap[l.size+0:], uint32(len(item.Blob)))
-	binary.BigEndian.PutUint64(l.mmap[l.size+4:], uint64(item.Key))
-	copy(l.mmap[l.size+ItemHeaderSize:], item.Blob)
+	off := l.size
+	binary.BigEndian.PutUint32(l.mmap[off:], uint32(len(item.Blob)))
+	off += 4
+	binary.BigEndian.PutUint64(l.mmap[off:], uint64(item.Key))
+	off += 8
+	off += int64(copy(l.mmap[off:], item.Blob))
+	l.mmap[off] = 0xFF // end of each item
 }
 
 func (l *Log) Push(items []item.Item) (loc item.Location, err error) {
-	if err = l.init(); err != nil {
-		return
-	}
-
 	addSize := len(items) * ItemHeaderSize
 	for i := 0; i < len(items); i++ {
 		addSize += len(items[i].Blob)
@@ -198,7 +178,7 @@ func (l *Log) Push(items []item.Item) (loc item.Location, err error) {
 	// copy the items to the file map:
 	for i := 0; i < len(items); i++ {
 		l.writeItem(items[i])
-		l.size += int64(ItemHeaderSize + len(items[i].Blob))
+		l.size += int64(ItemHeaderSize+len(items[i].Blob)) + 1
 	}
 
 	if err = l.Sync(false); err != nil {
@@ -209,17 +189,13 @@ func (l *Log) Push(items []item.Item) (loc item.Location, err error) {
 	return loc, nil
 }
 
-func (l *Log) At(loc item.Location) (LogIter, error) {
-	if err := l.init(); err != nil {
-		return LogIter{}, err
-	}
-
+func (l *Log) At(loc item.Location) LogIter {
 	return LogIter{
 		key:     loc.Key,
 		currOff: loc.Off,
 		currLen: loc.Len,
 		log:     l,
-	}, nil
+	}
 }
 
 func (l *Log) readItemAt(off item.Off, it *item.Item) (err error) {
