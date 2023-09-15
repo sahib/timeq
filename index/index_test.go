@@ -100,7 +100,7 @@ func TestIndexFromVlog(t *testing.T) {
 			},
 			ExpLocs: [][]item.Location{{{
 				Key: 0,
-				Off: 5*vlog.ItemHeaderSize + 5*2,
+				Off: 5*vlog.ItemHeaderSize + 5*(2+1),
 				Len: 10,
 			}}, {{
 				Key: 15,
@@ -120,7 +120,7 @@ func TestIndexFromVlog(t *testing.T) {
 				Len: 5,
 			}}, {{
 				Key: 1,
-				Off: vlog.ItemHeaderSize*5 + 5,
+				Off: vlog.ItemHeaderSize*5 + 5 + 5,
 				Len: 5,
 			},
 			}},
@@ -132,7 +132,7 @@ func TestIndexFromVlog(t *testing.T) {
 			},
 			ExpLocs: [][]item.Location{{{
 				Key: 100,
-				Off: 750,
+				Off: 800,
 				Len: 100,
 			}}, {{
 				Key: 300,

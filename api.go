@@ -119,12 +119,20 @@ func (q *Queue) Push(items Items) error {
 		keyMod := q.opts.BucketFunc(items[0].Key)
 		buck, err := q.buckets.ForKey(keyMod)
 		if err != nil {
-			return fmt.Errorf("bucket: for-key: %w", err)
+			if q.opts.ErrorMode == bucket.ErrorModeAbort {
+				return fmt.Errorf("bucket: for-key: %w", err)
+			}
+
+			q.opts.Logger.Printf("failed to push: %v", err)
 		}
 
 		nextIdx := binsplit(items, keyMod, q.opts.BucketFunc)
 		if err := buck.Push(items[:nextIdx]); err != nil {
-			return fmt.Errorf("bucket: push: %w", err)
+			if q.opts.ErrorMode == bucket.ErrorModeAbort {
+				return fmt.Errorf("bucket: push: %w", err)
+			}
+
+			q.opts.Logger.Printf("failed to push: %v", err)
 		}
 
 		items = items[nextIdx:]
@@ -161,7 +169,13 @@ func (q *Queue) Pop(n int, dst Items) (Items, error) {
 	err := q.buckets.Iter(bucket.Load, func(_ item.Key, b *bucket.Bucket) error {
 		newDst, popped, err := b.Pop(count, dst)
 		if err != nil {
-			return err
+			if q.opts.ErrorMode == bucket.ErrorModeAbort {
+				return err
+			}
+
+			// try with the next bucket in the hope that it works:
+			q.opts.Logger.Printf("failed to pop: %v", err)
+			return nil
 		}
 
 		dst = newDst
@@ -193,7 +207,13 @@ func (q *Queue) DeleteLowerThan(key Key) (int, error) {
 
 		numDeletedOfBucket, err := buck.DeleteLowerThan(key)
 		if err != nil {
-			return err
+			if q.opts.ErrorMode == bucket.ErrorModeAbort {
+				return err
+			}
+
+			// try with the next bucket in the hope that it works:
+			q.opts.Logger.Printf("failed to delete : %v", err)
+			return nil
 		}
 
 		numDeleted += numDeletedOfBucket

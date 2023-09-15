@@ -49,7 +49,7 @@ func FromVlog(log *vlog.Log) (*Index, error) {
 			isInitialItem = false
 		}
 
-		prevLoc.Off += vlog.ItemHeaderSize + item.Off(len(it.Blob))
+		prevLoc.Off += vlog.ItemHeaderSize + item.Off(len(it.Blob)) + 1
 		prevLoc.Key = it.Key
 	}
 

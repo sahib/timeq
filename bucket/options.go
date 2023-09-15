@@ -35,6 +35,13 @@ func (fl *fileLogger) Printf(fmtStr string, args ...any) {
 	fmt.Fprintf(fl.w, "[timeq] "+fmtStr, args...)
 }
 
+type ErrorMode int
+
+const (
+	ErrorModeAbort = ErrorMode(iota)
+	ErrorModeContinue
+)
+
 func DefaultLogger() Logger {
 	return &fileLogger{w: os.Stderr}
 }
@@ -49,12 +56,17 @@ type Options struct {
 	// Logger is used to output some non-critical warnigns or errors that could
 	// have been recovered. By default we print to stderr.
 	Logger Logger
+
+	// ErrorMode defines how non-critical errors are handled.
+	// See the individual enum values for more info.
+	ErrorMode ErrorMode
 }
 
 // DefaultOptions returns sane options you can start with
 func DefaultOptions() Options {
 	return Options{
-		SyncMode: SyncFull,
-		Logger:   DefaultLogger(),
+		SyncMode:  SyncFull,
+		ErrorMode: ErrorModeAbort,
+		Logger:    DefaultLogger(),
 	}
 }

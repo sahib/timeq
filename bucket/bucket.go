@@ -54,6 +54,9 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 	idxPath := filepath.Join(dir, "idx.log")
 	idx, err := index.Load(idxPath)
 	if err != nil {
+		// We try to re-generate the index from the value log.
+		// Since we have all the keys and offsets there too,
+		// we should be able to recover from that.
 		opts.Logger.Printf("failed to load index %s: %v", idxPath, err)
 		idx, err = index.FromVlog(log)
 		if err != nil {
@@ -120,7 +123,7 @@ func (b *Bucket) Push(items []item.Item) (outErr error) {
 		return nil
 	}
 
-	defer recoverMmapError(&outErr)
+	// defer recoverMmapError(&outErr)
 
 	// TODO: locking would only be needed when modifying the index?
 	//       all attributes of bucket itself are not modified after Open.

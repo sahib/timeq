@@ -41,8 +41,11 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 		buckPath := filepath.Join(dir, ent.Name())
 		key, err := item.KeyFromString(filepath.Base(buckPath))
 		if err != nil {
+			if opts.ErrorMode == ErrorModeAbort {
+				return nil, err
+			}
+
 			opts.Logger.Printf("failed to parse %s as bucket path\n", buckPath)
-			// TODO: should be optionable to error here.
 			continue
 		}
 
@@ -50,15 +53,22 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 
 		trailer, err := index.ReadTrailer(filepath.Join(buckPath, "idx.log"))
 		if err != nil {
+			if opts.ErrorMode == ErrorModeAbort {
+				return nil, err
+			}
+
 			opts.Logger.Printf("failed to read trailer: %v", err)
-			// TODO: bring back error mode to ignore bad buckets here.
 			continue
 		}
 
 		if trailer.TotalEntries == 0 {
 			// It's an empty bucket. Delete it.
 			if err := os.RemoveAll(buckPath); err != nil {
-				return nil, err
+				if opts.ErrorMode == ErrorModeAbort {
+					return nil, err
+				}
+
+				opts.Logger.Printf("failed to remove old bucket: %v", err)
 			}
 
 			continue
@@ -144,7 +154,7 @@ type IterMode int
 
 const (
 	// IncludeNil goes over all buckets, including those that are nil (not loaded.)
-	IncludeNil = iota
+	IncludeNil = IterMode(iota)
 
 	// LoadedOnly iterates over all buckets that were loaded already.
 	LoadedOnly

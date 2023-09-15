@@ -129,7 +129,7 @@ func (l *Log) shrink() int64 {
 	return idx + 1
 }
 
-func (l *Log) writeItem(item item.Item) {
+func (l *Log) writeItem(item item.Item) int64 {
 	off := l.size
 	binary.BigEndian.PutUint32(l.mmap[off:], uint32(len(item.Blob)))
 	off += 4
@@ -137,12 +137,13 @@ func (l *Log) writeItem(item item.Item) {
 	off += 8
 	off += int64(copy(l.mmap[off:], item.Blob))
 	l.mmap[off] = 0xFF // end of each item
+	return off + 1
 }
 
 func (l *Log) Push(items []item.Item) (loc item.Location, err error) {
 	addSize := len(items) * ItemHeaderSize
 	for i := 0; i < len(items); i++ {
-		addSize += len(items[i].Blob)
+		addSize += len(items[i].Blob) + 1
 	}
 
 	loc = item.Location{
@@ -177,8 +178,7 @@ func (l *Log) Push(items []item.Item) (loc item.Location, err error) {
 
 	// copy the items to the file map:
 	for i := 0; i < len(items); i++ {
-		l.writeItem(items[i])
-		l.size += int64(ItemHeaderSize+len(items[i].Blob)) + 1
+		l.size = l.writeItem(items[i])
 	}
 
 	if err = l.Sync(false); err != nil {
@@ -215,7 +215,7 @@ func (l *Log) readItemAt(off item.Off, it *item.Item) (err error) {
 		return fmt.Errorf("log: allocation too big for one value: %d", len)
 	}
 
-	if int64(off)+ItemHeaderSize+int64(len) > l.size {
+	if int64(off)+ItemHeaderSize+int64(len)+1 > l.size {
 		return fmt.Errorf(
 			"log: bad offset: %d+%d >= %d (payload too big)",
 			off,
