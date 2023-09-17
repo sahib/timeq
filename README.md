@@ -150,4 +150,4 @@ Chris Pahl [@sahib](https://github.com/sahib)
 - [ ] Profile and optimize a bit more, if possible.
 - [x] Use a configurable logger for warnings
 - [x] We crash currently when running out of space.
-- [ ] Figure out error handling. If a bucket is unreadable, fail or continue?
+- [x] Figure out error handling. If a bucket is unreadable, fail or continue?

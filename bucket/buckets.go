@@ -92,6 +92,27 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 	}, nil
 }
 
+// ValidateBucketKeys checks if the keys in the buckets correspond to the result
+// of the key func. Failure here indicates that the key function changed. No error
+// does not guarantee that the key func did not change though (e.g. the identity func
+// would produce no error in this check)
+func (bs *Buckets) ValidateBucketKeys(bucketFn func(item.Key) item.Key) error {
+	for iter := bs.tree.Iter(); iter.Next(); {
+		ik := iter.Key()
+		bk := bucketFn(ik)
+
+		if ik != bk {
+			return fmt.Errorf(
+				"bucket with key %s does not match key func (%d) - did it change",
+				ik,
+				bk,
+			)
+		}
+	}
+
+	return nil
+}
+
 func (bs *Buckets) buckPath(key item.Key) string {
 	return filepath.Join(bs.dir, key.String())
 }

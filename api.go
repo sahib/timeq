@@ -70,6 +70,10 @@ func Open(dir string, opts Options) (*Queue, error) {
 		return nil, fmt.Errorf("buckets: %w", err)
 	}
 
+	if err := bs.ValidateBucketKeys(opts.BucketFunc); err != nil {
+		return nil, err
+	}
+
 	return &Queue{
 		opts:    opts,
 		buckets: bs,
@@ -273,6 +277,7 @@ func (q *Queue) Close() error {
 // NOTE: This operation is currently not implemented atomic. Data might be lost
 // if a crash occurs between pop and push.
 func Shovel(src, dst *Queue) (int, error) {
+	// TODO: write test for this.
 	buf := make(Items, 0, 2000)
 	numPopped := 0
 	for {

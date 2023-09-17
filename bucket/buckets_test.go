@@ -113,4 +113,33 @@ func TestBucketsForKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, item.Key(33), b3c.Key())
 	require.Equal(t, 0, b3c.Len())
+	require.NoError(t, bs.Close())
+}
+
+func TestBucketsValidateFunc(t *testing.T) {
+	dir, err := os.MkdirTemp("", "timeq-bucketstest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	writeDummyBucket(t, dir, 30, testutils.GenItems(30, 40, 1))
+	writeDummyBucket(t, dir, 50, testutils.GenItems(50, 60, 1))
+
+	bs, err := LoadAll(dir, DefaultOptions())
+	require.NoError(t, err)
+
+	require.NoError(t, bs.ValidateBucketKeys(func(key item.Key) item.Key {
+		// id-func has to pass always.
+		return key
+	}))
+
+	require.NoError(t, bs.ValidateBucketKeys(func(key item.Key) item.Key {
+		// 30 -> 30 and 50 -> 50
+		return (key * 10) / 10
+	}))
+
+	require.Error(t, bs.ValidateBucketKeys(func(key item.Key) item.Key {
+		return (key / 3) * 3
+	}))
+
+	require.NoError(t, bs.Close())
 }
