@@ -8,6 +8,7 @@ import (
 
 	"github.com/sahib/timeq/bucket"
 	"github.com/sahib/timeq/item"
+	"github.com/sahib/timeq/item/testutils"
 	"github.com/stretchr/testify/require"
 )
 
@@ -138,4 +139,31 @@ func BenchmarkDefaultBucketFunc(b *testing.B) {
 			globalKey = (globalKey / div) * div
 		}
 	})
+}
+
+func BenchmarkShovel(b *testing.B) {
+	b.StopTimer()
+
+	dir, err := os.MkdirTemp("", "timeq-shovelbench")
+	require.NoError(b, err)
+	defer os.RemoveAll(dir)
+
+	srcDir := filepath.Join(dir, "src")
+	dstDir := filepath.Join(dir, "dst")
+	srcQueue, err := Open(srcDir, DefaultOptions())
+	require.NoError(b, err)
+	dstQueue, err := Open(dstDir, DefaultOptions())
+	require.NoError(b, err)
+
+	for run := 0; run < b.N; run++ {
+		require.NoError(b, srcQueue.Push(testutils.GenItems(0, 2000, 1)))
+		b.StartTimer()
+		_, err := Shovel(srcQueue, dstQueue)
+		require.NoError(b, err)
+		b.StopTimer()
+		require.NoError(b, dstQueue.Clear())
+	}
+
+	defer srcQueue.Close()
+	defer dstQueue.Close()
 }
