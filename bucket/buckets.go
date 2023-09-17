@@ -81,7 +81,6 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 
 	if dirsHandled == 0 && len(ents) > 0 {
 		return nil, fmt.Errorf("%s is not empty; refusing to create db", dir)
-
 	}
 
 	return &Buckets{
