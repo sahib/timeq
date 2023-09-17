@@ -110,6 +110,7 @@ There are also some other reasons:
 
 * If one bucket becomes corrupt for some reason, you loose only the data in this bucket.
 * Buckets cannot grow over 4GB due to the offsets being 32-bit values.
+* On ``Shovel()`` we can cheaply move buckets if they do not exist in the destination.
 
 ### Can I store more than one value per key?
 
@@ -130,7 +131,15 @@ and shift the priority: ``(prio << 32) | jobID``.
 Time will tell. I intend to use it on a big fleet of embedded devices in the
 field. Design wise, damaged index files can be regenerated from the data log.
 There's no error correction code applied in the data log and no checksums are
-currently written. If you need this, I'm happy if a PR comes in.
+currently written. If you need this, I'm happy if a PR comes in that enables it
+as option.
+
+For durability, the design is build to survice crashes without data loss (Push,
+Pop) but, in some cases, with duplicated data (Shovel). This assumes a filesystem
+with full journaling (``data=journal`` for ext4) or some other filesystem that gives
+your similar guarantees. At this point, this was not really tested in the wild yet.
+My recommendation is designing your application logic in a way that allows duplicate
+items to be handled from the queue.
 
 TODO: Describe how timeq is tested (small code base, coverage, fuzz tests)
 

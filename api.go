@@ -160,6 +160,16 @@ func (q *Queue) Push(items Items) error {
 // those mappings, causing segfaults when still accessing them. If you
 // need the items for later, then use item.Copy()
 func (q *Queue) Pop(n int, dst Items) (Items, error) {
+	return q.popOrPeek(false, n, dst)
+}
+
+// Peek works like Pop, but does not delete the items in the queue.
+// Note that calling Peek() twice will yield the same result.
+func (q *Queue) Peek(n int, dst Items) (Items, error) {
+	return q.popOrPeek(true, n, dst)
+}
+
+func (q *Queue) popOrPeek(peek bool, n int, dst Items) (Items, error) {
 	if n < 0 {
 		// use max value in this case:
 		n = int(^uint(0) >> 1)
@@ -170,8 +180,13 @@ func (q *Queue) Pop(n int, dst Items) (Items, error) {
 	// items we returned can cause a segfault immediately.
 
 	var count = n
-	err := q.buckets.Iter(bucket.Load, func(_ item.Key, b *bucket.Bucket) error {
-		newDst, popped, err := b.Pop(count, dst)
+	return dst, q.buckets.Iter(bucket.Load, func(_ item.Key, b *bucket.Bucket) error {
+		fn := b.Pop
+		if peek {
+			fn = b.Peek
+		}
+
+		newDst, nitems, err := fn(count, dst)
 		if err != nil {
 			if q.opts.ErrorMode == bucket.ErrorModeAbort {
 				return err
@@ -183,19 +198,13 @@ func (q *Queue) Pop(n int, dst Items) (Items, error) {
 		}
 
 		dst = newDst
-		count -= popped
+		count -= nitems
 		if count <= 0 {
 			return bucket.IterStop
 		}
 
 		return nil
 	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return dst, nil
 }
 
 // DeleteLowerThan deletes all items lower than `key`.
@@ -254,6 +263,7 @@ func (q *Queue) Sync() error {
 	return q.buckets.Sync()
 }
 
+// Clear fully deletes the queue contents.
 func (q *Queue) Clear() error {
 	return q.buckets.Clear()
 }
@@ -266,39 +276,14 @@ func (q *Queue) Close() error {
 }
 
 // Shovel moves items from `src` to `dst`. The `src` queue will be completely drained
-// afterwards. If items in the `dst` queue exists with the same timestamp, then they
-// will be overwritten.
+// afterwards. For speed reasons this assume that the dst queue uses the same bucket func
+// as the source queue. If you cannot guarantee this, you should implement a naive Shovel()
+// implementation that just uses Pop/Push.
 //
 // This method can be used if you want to change options like the BucketFunc or if you
 // intend to have more than one queue that are connected by some logic. Examples for the
 // latter case would be a "deadletter queue" where you put failed calculations for later
 // recalucations or a queue for unacknowledged items.
-//
-// NOTE: This operation is currently not implemented atomic. Data might be lost
-// if a crash occurs between pop and push.
 func Shovel(src, dst *Queue) (int, error) {
-	// TODO: write test for this.
-	buf := make(Items, 0, 2000)
-	numPopped := 0
-	for {
-		items, err := src.Pop(cap(buf), buf[:0])
-		if err != nil {
-			return numPopped, fmt.Errorf("timeq: shovel-pop: %w", err)
-		}
-
-		numPopped += len(items)
-		if len(items) == 0 {
-			break
-		}
-
-		if err := dst.Push(items); err != nil {
-			return numPopped, fmt.Errorf("timeq: shovel-push: %w", err)
-		}
-
-		if len(items) < cap(buf) {
-			break
-		}
-	}
-
-	return numPopped, nil
+	return src.buckets.Shovel(dst.buckets)
 }

@@ -3,10 +3,10 @@ module github.com/sahib/timeq
 go 1.21.0
 
 require (
+	github.com/otiai10/copy v1.12.0
 	github.com/stretchr/testify v1.8.4
 	github.com/tidwall/btree v1.6.0
 	github.com/urfave/cli v1.22.14
-	golang.org/x/exp v0.0.0-20230817173708-d852ddb80c63
 	golang.org/x/sys v0.11.0
 )
 

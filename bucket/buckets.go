@@ -3,6 +3,7 @@ package bucket
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -239,6 +240,10 @@ func (bs *Buckets) Clear() error {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 
+	return bs.clear()
+}
+
+func (bs *Buckets) clear() error {
 	keys := bs.tree.Keys()
 	for _, key := range keys {
 		if err := bs.delete(key); err != nil {
@@ -274,4 +279,62 @@ func (bs *Buckets) Len() int {
 	})
 
 	return len
+}
+
+func (bs *Buckets) Shovel(dstBs *Buckets) (int, error) {
+	dstBs.mu.Lock()
+	defer dstBs.mu.Unlock()
+
+	buf := make([]item.Item, 0, 4000)
+
+	var ntotalcopied int
+	err := bs.Iter(IncludeNil, func(key item.Key, srcBuck *Bucket) error {
+		if _, ok := dstBs.tree.Get(key); !ok {
+			// fast path: We can just move the bucket directory.
+			dstPath := dstBs.buckPath(key)
+			srcPath := bs.buckPath(key)
+			dstBs.tree.Set(key, nil)
+
+			trailer, err := index.ReadTrailer(filepath.Join(srcPath, "idx.log"))
+			if err != nil {
+				return err
+			}
+
+			ntotalcopied += int(trailer.TotalEntries)
+			dstBs.trailers[key] = trailer
+
+			return moveFileOrDir(srcPath, dstPath)
+		}
+
+		// In this case we have to copy the items more intelligently,
+		// since we have to append it to the destination bucket.
+
+		if srcBuck == nil {
+			var err error
+			srcBuck, err = Open(bs.buckPath(key), bs.opts)
+			if err != nil {
+				return err
+			}
+		}
+
+		// NOTE: This assumes that the destination has the same bucket func.
+		dstBuck, err := dstBs.forKey(key)
+		if err != nil {
+			return err
+		}
+
+		_, ncopied, err := srcBuck.Move(math.MaxInt, buf, dstBuck)
+		ntotalcopied += ncopied
+		return err
+	})
+
+	if err != nil {
+		return ntotalcopied, err
+	}
+
+	if err := bs.clear(); err != nil {
+		return ntotalcopied, err
+	}
+
+	return ntotalcopied, err
 }

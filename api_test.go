@@ -2,6 +2,7 @@ package timeq
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -89,4 +90,78 @@ func TestAPIBinsplitSeq(t *testing.T) {
 	for idx := 0; idx < len(items); idx++ {
 		require.Equal(t, 1, binsplit(items[idx:], Key(idx), idFunc))
 	}
+}
+
+func TestShovelFastPath(t *testing.T) {
+	dir, err := os.MkdirTemp("", "timeq-bucketstest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	q1Dir := filepath.Join(dir, "q1")
+	q2Dir := filepath.Join(dir, "q2")
+
+	q1, err := Open(q1Dir, DefaultOptions())
+	require.NoError(t, err)
+
+	q2, err := Open(q2Dir, DefaultOptions())
+	require.NoError(t, err)
+
+	exp := Items(testutils.GenItems(0, 1000, 1))
+	require.NoError(t, q1.Push(exp))
+	require.Equal(t, len(exp), q1.Len())
+	require.Equal(t, 0, q2.Len())
+
+	n, err := Shovel(q1, q2)
+	require.NoError(t, err)
+	require.Equal(t, len(exp), n)
+
+	require.Equal(t, 0, q1.Len())
+	require.Equal(t, len(exp), q2.Len())
+
+	got, err := q2.Pop(len(exp), nil)
+	require.NoError(t, err)
+	require.Equal(t, exp, got)
+
+	require.NoError(t, q1.Close())
+	require.NoError(t, q2.Close())
+}
+
+func TestShovelSlowPath(t *testing.T) {
+	dir, err := os.MkdirTemp("", "timeq-bucketstest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	q1Dir := filepath.Join(dir, "q1")
+	q2Dir := filepath.Join(dir, "q2")
+
+	q1, err := Open(q1Dir, DefaultOptions())
+	require.NoError(t, err)
+
+	q2, err := Open(q2Dir, DefaultOptions())
+	require.NoError(t, err)
+
+	q1Push := Items(testutils.GenItems(0, 500, 1))
+	require.NoError(t, q1.Push(q1Push))
+
+	// If the bucket exists we have to append:
+	q2Push := Items(testutils.GenItems(1000, 2500, 1))
+	require.NoError(t, q2.Push(q2Push))
+
+	require.Equal(t, len(q1Push), q1.Len())
+	require.Equal(t, len(q2Push), q2.Len())
+
+	n, err := Shovel(q1, q2)
+	require.NoError(t, err)
+	require.Equal(t, len(q1Push), n)
+
+	require.Equal(t, 0, q1.Len())
+	require.Equal(t, len(q1Push)+len(q2Push), q2.Len())
+
+	exp := append(q1Push, q2Push...)
+	got, err := q2.Pop(len(q1Push)+len(q2Push), nil)
+	require.NoError(t, err)
+	require.Equal(t, exp, got)
+
+	require.NoError(t, q1.Close())
+	require.NoError(t, q2.Close())
 }

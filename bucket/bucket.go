@@ -123,7 +123,7 @@ func (b *Bucket) Push(items []item.Item) (outErr error) {
 		return nil
 	}
 
-	// defer recoverMmapError(&outErr)
+	defer recoverMmapError(&outErr)
 
 	// TODO: locking would only be needed when modifying the index?
 	//       all attributes of bucket itself are not modified after Open.
@@ -156,36 +156,88 @@ func (b *Bucket) addPopIter(batchIters *vlog.LogIters, idxIter *index.Iter) (boo
 	return !idxIter.Next(), nil
 }
 
-func (b *Bucket) Pop(n int, dst []item.Item) (outItems []item.Item, npopped int, outErr error) {
+func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, int, error) {
 	if n <= 0 {
 		// technically that's a valid usecase.
 		return dst, 0, nil
 	}
 
-	defer recoverMmapError(&outErr)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	iters, items, npopped, err := b.peek(n, dst)
+	if err != nil {
+		return items, npopped, err
+	}
+
+	if iters != nil {
+		if err := b.popSync(iters); err != nil {
+			return items, npopped, err
+		}
+	}
+
+	return items, npopped, nil
+}
+
+func (b *Bucket) Peek(n int, dst []item.Item) ([]item.Item, int, error) {
+	if n <= 0 {
+		return dst, 0, nil
+	}
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	_, items, npopped, err := b.peek(n, dst)
+	return items, npopped, err
+}
+
+// Move data between two buckets in a safer way. In case of crashes the data might be present
+// in the destination queue, but is not yet deleted from the source queue. Callers should be
+// ready to handle duplicates.
+func (b *Bucket) Move(n int, dst []item.Item, dstBuck *Bucket) ([]item.Item, int, error) {
+	if n <= 0 {
+		// technically that's a valid usecase.
+		return dst, 0, nil
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	iters, items, npopped, err := b.peek(n, dst)
+	if err != nil {
+		return items, npopped, err
+	}
+
+	if err := dstBuck.Push(items); err != nil {
+		return items, npopped, err
+	}
+
+	return items, npopped, b.popSync(iters)
+}
+
+// peek reads from the bucket, but does not mark the elements as deleted yet.
+func (b *Bucket) peek(n int, dst []item.Item) (batchIters *vlog.LogIters, outItems []item.Item, npopped int, outErr error) {
+	defer recoverMmapError(&outErr)
 
 	// Fetch the lowest entry of the index:
 	idxIter := b.idx.Iter()
 	if !idxIter.Next() {
 		// The index is empty. Nothing to pop.
-		return dst, 0, nil
+		return nil, dst, 0, nil
 	}
 
 	// initialize with first batch iter:
 	batchItersSlice := make(vlog.LogIters, 0, 1)
-	batchIters := &batchItersSlice
+	batchIters = &batchItersSlice
 	indexExhausted, err := b.addPopIter(batchIters, &idxIter)
 	if err != nil {
-		return dst, 0, err
+		return nil, dst, 0, err
 	}
 
 	if len(*batchIters) == 0 {
 		// this should not happen normally, but can possibly
 		// in case of broken index or wal.
-		return dst, 0, err
+		return nil, dst, 0, err
 	}
 
 	// Choose the lowest item of all iterators here and make sure the next loop
@@ -202,7 +254,7 @@ func (b *Bucket) Pop(n int, dst []item.Item) (outItems []item.Item, npopped int,
 		var nextItem item.Item
 		(*batchIters)[0].Next(&nextItem)
 		if err := (*batchIters)[0].Err(); err != nil {
-			return dst, 0, err
+			return nil, dst, 0, err
 		}
 
 		// index batch entries might be overlapping. We need to check if the
@@ -214,7 +266,7 @@ func (b *Bucket) Pop(n int, dst []item.Item) (outItems []item.Item, npopped int,
 			if (*batchIters)[0].Exhausted() || nextLoc.Key <= nextItem.Key {
 				indexExhausted, err = b.addPopIter(batchIters, &idxIter)
 				if err != nil {
-					return dst, 0, err
+					return nil, dst, 0, err
 				}
 			}
 		}
@@ -223,6 +275,10 @@ func (b *Bucket) Pop(n int, dst []item.Item) (outItems []item.Item, npopped int,
 		heap.Fix(batchIters, 0)
 	}
 
+	return batchIters, dst, numAppends, nil
+}
+
+func (b *Bucket) popSync(batchIters *vlog.LogIters) error {
 	// NOTE: In theory we could also use fallocate(FALLOC_FL_ZERO_RANGE) on
 	// ext4 to "put holes" into the log file where we read batches from to save
 	// some space early. This would make sense only for very big buckets
@@ -238,7 +294,7 @@ func (b *Bucket) Pop(n int, dst []item.Item) (outItems []item.Item, npopped int,
 			b.idx.Set(currLoc)
 
 			if err := b.idxLog.Push(currLoc, b.idx.Trailer()); err != nil {
-				return dst, 0, fmt.Errorf("idxlog: append begun: %w", err)
+				return fmt.Errorf("idxlog: append begun: %w", err)
 			}
 		}
 
@@ -250,11 +306,11 @@ func (b *Bucket) Pop(n int, dst []item.Item) (outItems []item.Item, npopped int,
 			Off: 0,
 		}
 		if err := b.idxLog.Push(deadLoc, b.idx.Trailer()); err != nil {
-			return dst, 0, fmt.Errorf("idxlog: append begun: %w", err)
+			return fmt.Errorf("idxlog: append begun: %w", err)
 		}
 	}
 
-	return dst, numAppends, b.idxLog.Sync(false)
+	return b.idxLog.Sync(false)
 }
 
 func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
