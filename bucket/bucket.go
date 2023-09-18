@@ -118,15 +118,13 @@ func recoverMmapError(dstErr *error) {
 }
 
 // Push expects pre-sorted items!
-func (b *Bucket) Push(items []item.Item) (outErr error) {
+func (b *Bucket) Push(items item.Items) (outErr error) {
 	if len(items) == 0 {
 		return nil
 	}
 
 	defer recoverMmapError(&outErr)
 
-	// TODO: locking would only be needed when modifying the index?
-	//       all attributes of bucket itself are not modified after Open.
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -156,7 +154,7 @@ func (b *Bucket) addPopIter(batchIters *vlog.LogIters, idxIter *index.Iter) (boo
 	return !idxIter.Next(), nil
 }
 
-func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, int, error) {
+func (b *Bucket) Pop(n int, dst item.Items) (item.Items, int, error) {
 	if n <= 0 {
 		// technically that's a valid usecase.
 		return dst, 0, nil
@@ -179,7 +177,7 @@ func (b *Bucket) Pop(n int, dst []item.Item) ([]item.Item, int, error) {
 	return items, npopped, nil
 }
 
-func (b *Bucket) Peek(n int, dst []item.Item) ([]item.Item, int, error) {
+func (b *Bucket) Peek(n int, dst item.Items) (item.Items, int, error) {
 	if n <= 0 {
 		return dst, 0, nil
 	}
@@ -194,7 +192,7 @@ func (b *Bucket) Peek(n int, dst []item.Item) ([]item.Item, int, error) {
 // Move data between two buckets in a safer way. In case of crashes the data might be present
 // in the destination queue, but is not yet deleted from the source queue. Callers should be
 // ready to handle duplicates.
-func (b *Bucket) Move(n int, dst []item.Item, dstBuck *Bucket) ([]item.Item, int, error) {
+func (b *Bucket) Move(n int, dst item.Items, dstBuck *Bucket) (item.Items, int, error) {
 	if n <= 0 {
 		// technically that's a valid usecase.
 		return dst, 0, nil
@@ -216,7 +214,7 @@ func (b *Bucket) Move(n int, dst []item.Item, dstBuck *Bucket) ([]item.Item, int
 }
 
 // peek reads from the bucket, but does not mark the elements as deleted yet.
-func (b *Bucket) peek(n int, dst []item.Item) (batchIters *vlog.LogIters, outItems []item.Item, npopped int, outErr error) {
+func (b *Bucket) peek(n int, dst item.Items) (batchIters *vlog.LogIters, outItems item.Items, npopped int, outErr error) {
 	defer recoverMmapError(&outErr)
 
 	// Fetch the lowest entry of the index:

@@ -23,11 +23,11 @@ assumption for optimal performance:
 
 - Your OS supports `mmap()` and `mremap()` (tested on Linux)
 - Seeking is not too expensive (i.e. no rotating disks)
-- The priority key is something that roughly increases over time (see [FAQ](#FAQ)).
-- You only want to store one value per key (see [FAQ](#FAQ)).
-- You push and pop your data in batches.
+- The priority key ideally increases without much duplicates (like timestamps, see [FAQ](#FAQ)).
+- You push and pop your data in, ideally big, batches.
 - File storage is not a primary concern (i.e. no compression implemented).
-- You trust your data durability to some random duded on the internet (don't we all?).
+- The underlying storage has a low risk for write errors or bit flips.
+- You trust your data safety to some random dude on the internet (don't we all?).
 
 If some of those assumptions do not fit your usecase and you still managed to make it work,
 I would be happy for some feedback or even pull requests to improve the general usability.

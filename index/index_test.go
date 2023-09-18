@@ -59,7 +59,7 @@ func TestIndexSet(t *testing.T) {
 	require.Equal(t, 0, skew)
 }
 
-func testIndexFromVlog(t *testing.T, pushes [][]item.Item, expLocs [][]item.Location) {
+func testIndexFromVlog(t *testing.T, pushes []item.Items, expLocs [][]item.Location) {
 	tmpDir, err := os.MkdirTemp("", "timeq-vlogtest")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
@@ -89,18 +89,18 @@ func testIndexFromVlog(t *testing.T, pushes [][]item.Item, expLocs [][]item.Loca
 func TestIndexFromVlog(t *testing.T) {
 	tcs := []struct {
 		Name    string
-		Pushes  [][]item.Item
+		Pushes  []item.Items
 		ExpLocs [][]item.Location
 	}{
 		{
 			Name: "consecutive",
-			Pushes: [][]item.Item{
+			Pushes: []item.Items{
 				testutils.GenItems(15, 20, 1),
 				testutils.GenItems(0, 10, 1),
 			},
 			ExpLocs: [][]item.Location{{{
 				Key: 0,
-				Off: 5*vlog.ItemHeaderSize + 5*(2+1),
+				Off: testutils.GenItems(15, 20, 1).StorageSize(),
 				Len: 10,
 			}}, {{
 				Key: 15,
@@ -110,7 +110,7 @@ func TestIndexFromVlog(t *testing.T) {
 			}},
 		}, {
 			Name: "strided",
-			Pushes: [][]item.Item{
+			Pushes: []item.Items{
 				testutils.GenItems(0, 10, 2),
 				testutils.GenItems(1, 10, 2),
 			},
@@ -120,19 +120,19 @@ func TestIndexFromVlog(t *testing.T) {
 				Len: 5,
 			}}, {{
 				Key: 1,
-				Off: vlog.ItemHeaderSize*5 + 5 + 5,
+				Off: testutils.GenItems(1, 10, 2).StorageSize(),
 				Len: 5,
 			},
 			}},
 		}, {
 			Name: "gap",
-			Pushes: [][]item.Item{
+			Pushes: []item.Items{
 				testutils.GenItems(300, 400, 2),
 				testutils.GenItems(100, 200, 1),
 			},
 			ExpLocs: [][]item.Location{{{
 				Key: 100,
-				Off: 800,
+				Off: testutils.GenItems(300, 400, 2).StorageSize(),
 				Len: 100,
 			}}, {{
 				Key: 300,

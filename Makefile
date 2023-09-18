@@ -9,4 +9,5 @@ test:
 	gotestsum ./...
 
 bench:
-	go test -v -bench=. -run=xxx -benchmem -cpuprofile=cpu.pprof -memprofile=mem.pprof
+	sudo sh -c 'sync && echo 3 > /proc/sys/vm/drop_caches'
+	go test -v -bench=None -run=xxx -benchmem -cpuprofile=cpu.pprof -memprofile=mem.pprof

@@ -13,12 +13,12 @@ func ItemFromIndex(idx int) item.Item {
 	}
 }
 
-func GenItems(start, stop, step int) []item.Item {
+func GenItems(start, stop, step int) item.Items {
 	if step == 0 {
 		return nil
 	}
 
-	var its []item.Item
+	var its item.Items
 	for idx := start; ; idx += step {
 		if step > 0 && idx >= stop {
 			break

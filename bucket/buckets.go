@@ -285,7 +285,7 @@ func (bs *Buckets) Shovel(dstBs *Buckets) (int, error) {
 	dstBs.mu.Lock()
 	defer dstBs.mu.Unlock()
 
-	buf := make([]item.Item, 0, 4000)
+	buf := make(item.Items, 0, 4000)
 
 	var ntotalcopied int
 	err := bs.Iter(IncludeNil, func(key item.Key, srcBuck *Bucket) error {

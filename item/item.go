@@ -7,6 +7,11 @@ import (
 	"strings"
 )
 
+const (
+	HeaderSize  = 12
+	TrailerSize = 2
+)
+
 // Key is a priority key in the queue. It has to be unique
 // to avoid overwriting other entries. This was written with
 // unix nanosecond epoch stamps in mind.
@@ -38,6 +43,10 @@ type Item struct {
 
 func (i Item) String() string {
 	return fmt.Sprintf("%s:%s", i.Key, i.Blob)
+}
+
+func (i Item) StorageSize() Off {
+	return HeaderSize + Off(len(i.Blob)) + TrailerSize
 }
 
 func (i *Item) Copy() Item {
@@ -92,4 +101,12 @@ func (items Items) Copy() Items {
 	}
 
 	return itemsCopy
+}
+
+func (items Items) StorageSize() Off {
+	var sum Off = Off(len(items)) * (HeaderSize + TrailerSize)
+	for idx := 0; idx < len(items); idx++ {
+		sum += Off(len(items[idx].Blob))
+	}
+	return sum
 }

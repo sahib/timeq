@@ -10,15 +10,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// TODO: Think about making the disk format more failproof. Ideas:
-// - Add a block with magic number every N items so iter can seek to it
-//   in case of errors.
-// - Iters should automatically skip bad items.
-// - Checksums?
-// - Solomon Reed?
-
-const ItemHeaderSize = 12
-
 type Log struct {
 	path        string
 	fd          *os.File
@@ -27,9 +18,14 @@ type Log struct {
 	syncOnWrite bool
 }
 
+var PageSize int64 = 4096
+
+func init() {
+	PageSize = int64(os.Getpagesize())
+}
+
 func nextSize(size int64) int64 {
-	pageSize := int64(os.Getpagesize())
-	currPages := size / pageSize
+	currPages := size / PageSize
 
 	// decide on how much to increase:
 	var shift int
@@ -53,7 +49,7 @@ func nextSize(size int64) int64 {
 	}
 
 	// use shift to round to next page alignment:
-	nextSize := (((currPages >> shift) + 1) << shift) * pageSize
+	nextSize := (((currPages >> shift) + 1) << shift) * PageSize
 	return nextSize
 }
 
@@ -129,22 +125,22 @@ func (l *Log) shrink() int64 {
 	return idx + 1
 }
 
-func (l *Log) writeItem(item item.Item) int64 {
+func (l *Log) writeItem(it item.Item) int64 {
 	off := l.size
-	binary.BigEndian.PutUint32(l.mmap[off:], uint32(len(item.Blob)))
+	binary.BigEndian.PutUint32(l.mmap[off:], uint32(len(it.Blob)))
 	off += 4
-	binary.BigEndian.PutUint64(l.mmap[off:], uint64(item.Key))
+	binary.BigEndian.PutUint64(l.mmap[off:], uint64(it.Key))
 	off += 8
-	off += int64(copy(l.mmap[off:], item.Blob))
-	l.mmap[off] = 0xFF // end of each item
-	return off + 1
+	off += int64(copy(l.mmap[off:], it.Blob))
+
+	// add trailer mark:
+	l.mmap[off+0] = 0xFF
+	l.mmap[off+1] = 0xFF
+	return off + item.TrailerSize
 }
 
-func (l *Log) Push(items []item.Item) (loc item.Location, err error) {
-	addSize := len(items) * ItemHeaderSize
-	for i := 0; i < len(items); i++ {
-		addSize += len(items[i].Blob) + 1
-	}
+func (l *Log) Push(items item.Items) (loc item.Location, err error) {
+	addSize := items.StorageSize()
 
 	loc = item.Location{
 		Key: items[0].Key,
@@ -191,18 +187,31 @@ func (l *Log) Push(items []item.Item) (loc item.Location, err error) {
 
 func (l *Log) At(loc item.Location) LogIter {
 	return LogIter{
-		key:     loc.Key,
-		currOff: loc.Off,
-		currLen: loc.Len,
-		log:     l,
+		firstKey: loc.Key,
+		currOff:  loc.Off,
+		currLen:  loc.Len,
+		log:      l,
 	}
 }
 
+// TODO: write a test for this.
+func (l *Log) findNextItem(off item.Off) item.Off {
+	for idx := off + 1; idx < item.Off(l.size-1); idx++ {
+		if l.mmap[idx] == 0xFF && l.mmap[idx+1] == 0xFF {
+			// we found a marker.
+			return idx
+		}
+	}
+
+	return item.Off(l.size)
+}
+
 func (l *Log) readItemAt(off item.Off, it *item.Item) (err error) {
-	if int64(off)+ItemHeaderSize >= l.size {
-		// NOTE: This migh happen in valid cases: i.e. when the initial size is determined we iterate
-		// until the end of the WAL. If the last item happens to be cut off we would throw an error
-		// here. In this case we just want to stop iterating.
+	if int64(off)+item.HeaderSize >= l.size {
+		// NOTE: This might happen in valid cases: i.e. when the initial size
+		// is determined we iterate until the end of the WAL. If the last item
+		// happens to be cut off we would throw an error here. In this case we
+		// just want to stop iterating.
 		return nil
 	}
 
@@ -215,7 +224,7 @@ func (l *Log) readItemAt(off item.Off, it *item.Item) (err error) {
 		return fmt.Errorf("log: allocation too big for one value: %d", len)
 	}
 
-	if int64(off)+ItemHeaderSize+int64(len)+1 > l.size {
+	if int64(off)+item.HeaderSize+int64(len)+item.TrailerSize > l.size {
 		return fmt.Errorf(
 			"log: bad offset: %d+%d >= %d (payload too big)",
 			off,
@@ -228,10 +237,18 @@ func (l *Log) readItemAt(off item.Off, it *item.Item) (err error) {
 	// has to copy the slice if he wants to save it somewhere as we might
 	// overwrite, unmap or resize the underlying memory at a later point.
 	// Caller can use item.Copy() or items.Copy() to obtain a copy.
-	blobOff := off + ItemHeaderSize
+	blobOff := off + item.HeaderSize
+	trailerOff := blobOff + item.Off(len)
+
+	// check that the trailer was correctly written.
+	// (not a checksum, but could be made to one in future versions)
+	if l.mmap[trailerOff] != 0xFF && l.mmap[trailerOff+1] != 0xFF {
+		return fmt.Errorf("log: missing trailer: %d", off)
+	}
+
 	*it = item.Item{
 		Key:  item.Key(key),
-		Blob: l.mmap[blobOff : blobOff+item.Off(len)],
+		Blob: l.mmap[blobOff:trailerOff],
 	}
 
 	return nil

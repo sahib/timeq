@@ -25,8 +25,8 @@ func benchmarkPushPopWithSyncMode(b *testing.B, benchmarkPush bool, syncMode buc
 	require.NoError(b, err)
 
 	// Add some dummy data:
-	items := make([]item.Item, 2000)
-	dstItems := make([]item.Item, 0, 2000)
+	items := make(item.Items, 2000)
+	dstItems := make(item.Items, 0, 2000)
 	timeoff := 0
 
 	b.ResetTimer()

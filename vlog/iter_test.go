@@ -25,7 +25,7 @@ func TestIter(t *testing.T) {
 	loc, err := log.Push(testutils.GenItems(10, 20, 1))
 	require.NoError(t, err)
 
-	firstBatchOff := ItemHeaderSize*10 + 10 + 10
+	firstBatchOff := (item.HeaderSize+item.TrailerSize)*10 + 10
 	require.Equal(t, loc, item.Location{
 		Key: 10,
 		Off: item.Off(firstBatchOff),
@@ -45,7 +45,7 @@ func TestIter(t *testing.T) {
 		currLoc := iter.CurrentLocation()
 		require.Equal(t, item.Location{
 			Key: item.Key(count + 10),
-			Off: item.Off(firstBatchOff + count*(ItemHeaderSize+2+1)),
+			Off: item.Off(firstBatchOff + count*(item.HeaderSize+2+item.TrailerSize)),
 			Len: item.Off(10 - count),
 		}, currLoc)
 		count++

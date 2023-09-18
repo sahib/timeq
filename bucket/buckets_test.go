@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func writeDummyBucket(t *testing.T, dir string, key item.Key, items []item.Item) {
+func writeDummyBucket(t *testing.T, dir string, key item.Key, items item.Items) {
 	bucketDir := filepath.Join(dir, key.String())
 	require.NoError(t, os.MkdirAll(bucketDir, 0700))
 
