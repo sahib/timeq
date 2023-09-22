@@ -198,12 +198,12 @@ func TestBucketDeleteLowerThan(t *testing.T) {
 
 		deleted, err := bucket.DeleteLowerThan(50)
 		require.NoError(t, err)
-		require.Equal(t, 49, deleted)
+		require.Equal(t, 50, deleted)
 		require.False(t, bucket.Empty())
 
 		deleted, err = bucket.DeleteLowerThan(100)
 		require.NoError(t, err)
-		require.Equal(t, 51, deleted)
+		require.Equal(t, 50, deleted)
 		require.True(t, bucket.Empty())
 	})
 }
@@ -235,6 +235,28 @@ func TestPushDuplicates(t *testing.T) {
 	})
 }
 
+func TestPeek(t *testing.T) {
+	withEmptyBucket(t, func(bucket *Bucket) {
+		const N = 100
+		exp := testutils.GenItems(0, N, 1)
+		require.NoError(t, bucket.Push(exp))
+
+		// peek should not delete something, so check it's idempotent.
+		for idx := 0; idx < 2; idx++ {
+			got, npeeked, err := bucket.Peek(N, nil)
+			require.NoError(t, err)
+			require.Equal(t, N, npeeked)
+			require.Equal(t, exp, got)
+		}
+
+		// A consequent pop() should yield the same result:
+		got, npeeked, err := bucket.Pop(N, nil)
+		require.NoError(t, err)
+		require.Equal(t, N, npeeked)
+		require.Equal(t, exp, got)
+	})
+}
+
 // TODO: Tests:
 // - overlapping pushes.
 // - key function (api)
@@ -242,3 +264,4 @@ func TestPushDuplicates(t *testing.T) {
 //   - bucket deleted?
 //   - popped items really gone?
 // - iter tests for buckets.
+// - peek

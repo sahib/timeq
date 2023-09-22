@@ -156,20 +156,26 @@ func (q *Queue) Push(items Items) error {
 //
 // You should immediately process the items and not store them
 // elsewhere. The reason is that the returned memory is a slice of a
-// memory-mapped file. Certain operations like Clear() will close
-// those mappings, causing segfaults when still accessing them. If you
-// need the items for later, then use item.Copy()
+// memory-mapped file. Certain operations like Clear(), Push(),
+// DeleteLowerThan() and Shovel() will close or move those mappings,
+// causing segfaults when still accessing them. If you need the items
+// for later, then use item.Copy() before your next call.
 func (q *Queue) Pop(n int, dst Items) (Items, error) {
-	return q.popOrPeek(false, n, dst)
+	return q.popOrPeek(pop, n, dst)
 }
+
+const (
+	peek = 0
+	pop  = 1
+)
 
 // Peek works like Pop, but does not delete the items in the queue.
 // Note that calling Peek() twice will yield the same result.
 func (q *Queue) Peek(n int, dst Items) (Items, error) {
-	return q.popOrPeek(true, n, dst)
+	return q.popOrPeek(peek, n, dst)
 }
 
-func (q *Queue) popOrPeek(peek bool, n int, dst Items) (Items, error) {
+func (q *Queue) popOrPeek(op int, n int, dst Items) (Items, error) {
 	if n < 0 {
 		// use max value in this case:
 		n = int(^uint(0) >> 1)
@@ -182,7 +188,7 @@ func (q *Queue) popOrPeek(peek bool, n int, dst Items) (Items, error) {
 	var count = n
 	return dst, q.buckets.Iter(bucket.Load, func(_ item.Key, b *bucket.Bucket) error {
 		fn := b.Pop
-		if peek {
+		if op == peek {
 			fn = b.Peek
 		}
 
@@ -212,7 +218,7 @@ func (q *Queue) DeleteLowerThan(key Key) (int, error) {
 	var numDeleted int
 	var deletableBucks []*bucket.Bucket
 
-	err := q.buckets.Iter(bucket.IncludeNil, func(bucketKey item.Key, buck *bucket.Bucket) error {
+	err := q.buckets.Iter(bucket.Load, func(bucketKey item.Key, buck *bucket.Bucket) error {
 		if bucketKey >= key {
 			// stop loading buckets if not necessary.
 			return bucket.IterStop

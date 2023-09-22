@@ -25,7 +25,7 @@ func TestKeyTrunc(t *testing.T) {
 }
 
 func TestAPIPushPopSeveralBuckets(t *testing.T) {
-	dir, err := os.MkdirTemp("", "timeq-bucketstest")
+	dir, err := os.MkdirTemp("", "timeq-apitest")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
@@ -92,8 +92,8 @@ func TestAPIBinsplitSeq(t *testing.T) {
 	}
 }
 
-func TestShovelFastPath(t *testing.T) {
-	dir, err := os.MkdirTemp("", "timeq-bucketstest")
+func TestAPIShovelFastPath(t *testing.T) {
+	dir, err := os.MkdirTemp("", "timeq-apitest")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
@@ -126,8 +126,8 @@ func TestShovelFastPath(t *testing.T) {
 	require.NoError(t, q2.Close())
 }
 
-func TestShovelSlowPath(t *testing.T) {
-	dir, err := os.MkdirTemp("", "timeq-bucketstest")
+func TestAPIShovelSlowPath(t *testing.T) {
+	dir, err := os.MkdirTemp("", "timeq-apitest")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
@@ -164,4 +164,85 @@ func TestShovelSlowPath(t *testing.T) {
 
 	require.NoError(t, q1.Close())
 	require.NoError(t, q2.Close())
+}
+
+func TestAPIDeleteLowerThan(t *testing.T) {
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	opts := DefaultOptions()
+	opts.BucketFunc = func(k Key) Key {
+		return (k / 100) * 100
+	}
+
+	queue, err := Open(dir, opts)
+	require.NoError(t, err)
+
+	// Deleting the first half should work without issue:
+	exp := testutils.GenItems(0, 1000, 1)
+	require.NoError(t, queue.Push(exp))
+	ndeleted, err := queue.DeleteLowerThan(500)
+	require.NoError(t, err)
+	require.Equal(t, 500, ndeleted)
+
+	// Deleting the same should yield 0 now.
+	ndeleted, err = queue.DeleteLowerThan(500)
+	require.NoError(t, err)
+	require.Equal(t, 0, ndeleted)
+
+	// Do a partial delete of a bucket:
+	ndeleted, err = queue.DeleteLowerThan(501)
+	require.NoError(t, err)
+	require.Equal(t, 1, ndeleted)
+
+	// Delete more than what is left:
+	ndeleted, err = queue.DeleteLowerThan(2000)
+	require.NoError(t, err)
+	require.Equal(t, 499, ndeleted)
+
+	require.NoError(t, queue.Close())
+}
+
+func TestAPIPeek(t *testing.T) {
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	opts := DefaultOptions()
+	opts.BucketFunc = func(k Key) Key {
+		return (k / 100) * 100
+	}
+
+	queue, err := Open(dir, opts)
+	require.NoError(t, err)
+
+	exp := testutils.GenItems(0, 200, 1)
+	require.NoError(t, queue.Push(exp))
+	got, err := queue.Peek(len(exp), nil)
+	require.NoError(t, err)
+	require.Equal(t, exp, got)
+
+	got, err = queue.Pop(len(exp), nil)
+	require.NoError(t, err)
+	require.Equal(t, exp, got)
+
+	require.NoError(t, queue.Close())
+}
+
+func TestAPClear(t *testing.T) {
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	queue, err := Open(dir, DefaultOptions())
+	require.NoError(t, err)
+
+	// Empty clear should still work fine:
+	require.NoError(t, queue.Clear())
+	require.NoError(t, queue.Push(testutils.GenItems(0, 100, 1)))
+	require.NoError(t, queue.Clear())
+	require.Equal(t, 0, queue.Len())
+
+	require.NoError(t, queue.Close())
 }
