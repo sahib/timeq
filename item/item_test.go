@@ -33,3 +33,23 @@ func TestKeyFromString(t *testing.T) {
 	_, err = KeyFromString("ZZ")
 	require.Error(t, err)
 }
+
+func TestItemsCopy(t *testing.T) {
+	items := Items{
+		Item{
+			Key:  17,
+			Blob: []byte("blob"),
+		},
+		Item{
+			Key:  23,
+			Blob: []byte(""),
+		},
+		Item{
+			Key:  42,
+			Blob: []byte(""),
+		},
+	}
+	copied := items.Copy()
+	require.Equal(t, items, copied)
+	require.True(t, unsafe.SliceData(items) != unsafe.SliceData(copied))
+}

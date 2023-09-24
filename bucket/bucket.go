@@ -336,12 +336,11 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 
 		logIter := b.log.At(loc)
 		for logIter.Next(&partialItem) {
+			partialLoc = logIter.CurrentLocation()
 			if partialItem.Key >= key {
 				partialFound = true
 				break
 			}
-
-			partialLoc = logIter.CurrentLocation()
 		}
 
 		if partialFound {

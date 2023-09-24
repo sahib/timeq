@@ -31,6 +31,7 @@ assumption for optimal performance:
 
 If some of those assumptions do not fit your usecase and you still managed to make it work,
 I would be happy for some feedback or even pull requests to improve the general usability.
+
 ## Usecase
 
 My primary usecase was a embedded linux device that has different services that generate

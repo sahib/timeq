@@ -2,3 +2,4 @@ timeq
 *.out
 *.pprof
 *.test
+cover
