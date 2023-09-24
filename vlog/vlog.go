@@ -199,7 +199,7 @@ func (l *Log) findNextItem(off item.Off) item.Off {
 	for idx := off + 1; idx < item.Off(l.size-1); idx++ {
 		if l.mmap[idx] == 0xFF && l.mmap[idx+1] == 0xFF {
 			// we found a marker.
-			return idx
+			return idx + 2
 		}
 	}
 
