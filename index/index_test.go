@@ -12,6 +12,8 @@ import (
 )
 
 func TestIndexLoad(t *testing.T) {
+	t.Parallel()
+
 	tmpDir, err := os.MkdirTemp("", "timeq-indextest")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
@@ -51,6 +53,8 @@ func TestIndexLoad(t *testing.T) {
 }
 
 func TestIndexSet(t *testing.T) {
+	t.Parallel()
+
 	index := Index{}
 
 	oldLoc := item.Location{Key: 23}
@@ -145,12 +149,20 @@ func TestIndexFromVlog(t *testing.T) {
 
 	for _, tc := range tcs {
 		t.Run(tc.Name, func(t *testing.T) {
-			testIndexFromVlog(t, tc.Pushes, tc.ExpLocs)
+			tc := tc
+			t.Parallel()
+			testIndexFromVlog(
+				t,
+				tc.Pushes,
+				tc.ExpLocs,
+			)
 		})
 	}
 }
 
 func TestIndexDuplicateSet(t *testing.T) {
+	t.Parallel()
+
 	index := &Index{}
 	loc1 := item.Location{
 		Key: 10,
@@ -196,6 +208,7 @@ func TestIndexDuplicateSet(t *testing.T) {
 }
 
 func TestIndexNoCrashOnBadAPIUsage(t *testing.T) {
+	t.Parallel()
 	index := &Index{}
 	iter := index.Iter()
 	iter.Value() // this should not crash

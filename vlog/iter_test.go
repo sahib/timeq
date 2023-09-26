@@ -12,6 +12,8 @@ import (
 )
 
 func TestIter(t *testing.T) {
+	t.Parallel()
+
 	tmpDir, err := os.MkdirTemp("", "timeq-vlogtest")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
@@ -57,6 +59,8 @@ func TestIter(t *testing.T) {
 }
 
 func TestIterEmpty(t *testing.T) {
+	t.Parallel()
+
 	tmpDir, err := os.MkdirTemp("", "timeq-vlogtest")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
@@ -72,6 +76,8 @@ func TestIterEmpty(t *testing.T) {
 }
 
 func TestIterInvalidLocation(t *testing.T) {
+	t.Parallel()
+
 	tmpDir, err := os.MkdirTemp("", "timeq-vlogtest")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)

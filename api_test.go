@@ -13,6 +13,8 @@ import (
 )
 
 func TestKeyTrunc(t *testing.T) {
+	t.Parallel()
+
 	stamp := time.Date(2023, 1, 1, 12, 13, 14, 15, time.UTC)
 	trunc1 := DefaultBucketFunc(item.Key(stamp.UnixNano()))
 	trunc2 := DefaultBucketFunc(item.Key(stamp.Add(time.Minute).UnixNano()))
@@ -25,6 +27,8 @@ func TestKeyTrunc(t *testing.T) {
 }
 
 func TestAPIPushPopSeveralBuckets(t *testing.T) {
+	t.Parallel()
+
 	dir, err := os.MkdirTemp("", "timeq-apitest")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
@@ -68,6 +72,8 @@ func TestAPIPushPopSeveralBuckets(t *testing.T) {
 }
 
 func TestAPIBinsplit(t *testing.T) {
+	t.Parallel()
+
 	idFunc := func(k Key) Key { return k }
 
 	items := Items{
@@ -85,6 +91,8 @@ func TestAPIBinsplit(t *testing.T) {
 }
 
 func TestAPIBinsplitSeq(t *testing.T) {
+	t.Parallel()
+
 	idFunc := func(k Key) Key { return k }
 	items := testutils.GenItems(0, 10, 1)
 	for idx := 0; idx < len(items); idx++ {
@@ -93,6 +101,8 @@ func TestAPIBinsplitSeq(t *testing.T) {
 }
 
 func TestAPIShovelFastPath(t *testing.T) {
+	t.Parallel()
+
 	dir, err := os.MkdirTemp("", "timeq-apitest")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
@@ -127,6 +137,8 @@ func TestAPIShovelFastPath(t *testing.T) {
 }
 
 func TestAPIShovelSlowPath(t *testing.T) {
+	t.Parallel()
+
 	dir, err := os.MkdirTemp("", "timeq-apitest")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
@@ -167,6 +179,8 @@ func TestAPIShovelSlowPath(t *testing.T) {
 }
 
 func TestAPIDeleteLowerThan(t *testing.T) {
+	t.Parallel()
+
 	dir, err := os.MkdirTemp("", "timeq-apitest")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
@@ -205,6 +219,8 @@ func TestAPIDeleteLowerThan(t *testing.T) {
 }
 
 func TestAPIPeek(t *testing.T) {
+	t.Parallel()
+
 	dir, err := os.MkdirTemp("", "timeq-apitest")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
@@ -231,6 +247,8 @@ func TestAPIPeek(t *testing.T) {
 }
 
 func TestAPClear(t *testing.T) {
+	t.Parallel()
+
 	dir, err := os.MkdirTemp("", "timeq-apitest")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)

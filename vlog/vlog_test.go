@@ -11,6 +11,8 @@ import (
 )
 
 func TestLogOpenUnaligned(t *testing.T) {
+	t.Parallel()
+
 	tmpDir, err := os.MkdirTemp("", "timeq-vlogtest")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
@@ -31,6 +33,8 @@ func TestLogOpenUnaligned(t *testing.T) {
 }
 
 func TestLogOpenEmpty(t *testing.T) {
+	t.Parallel()
+
 	tmpDir, err := os.MkdirTemp("", "timeq-vlogtest")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
@@ -41,6 +45,8 @@ func TestLogOpenEmpty(t *testing.T) {
 }
 
 func TestLogOpenPushRead(t *testing.T) {
+	t.Parallel()
+
 	tmpDir, err := os.MkdirTemp("", "timeq-vlogtest")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
@@ -66,6 +72,8 @@ func TestLogOpenPushRead(t *testing.T) {
 }
 
 func TestLogShrink(t *testing.T) {
+	t.Parallel()
+
 	tmpDir, err := os.MkdirTemp("", "timeq-vlogtest")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)

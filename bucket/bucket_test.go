@@ -11,9 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func withEmptyBucket(t *testing.T, fn func(b *Bucket)) {
-	t.Parallel()
-
+func createEmptyBucket(t *testing.T) (*Bucket, string) {
 	dir, err := os.MkdirTemp("", "timeq-buckettest")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
@@ -22,8 +20,13 @@ func withEmptyBucket(t *testing.T, fn func(b *Bucket)) {
 	bucket, err := Open(bucketDir, DefaultOptions())
 	require.NoError(t, err)
 
-	fn(bucket)
+	return bucket, dir
+}
 
+func withEmptyBucket(t *testing.T, fn func(b *Bucket)) {
+	bucket, dir := createEmptyBucket(t)
+	defer os.RemoveAll(dir)
+	fn(bucket)
 	require.NoError(t, bucket.Close())
 }
 
@@ -257,6 +260,34 @@ func TestPeek(t *testing.T) {
 	})
 }
 
+func TestBucketShovel(t *testing.T) {
+	t.Parallel()
+
+	srcBuck, srcDir := createEmptyBucket(t)
+	dstBuck, dstDir := createEmptyBucket(t)
+	defer os.RemoveAll(srcDir)
+	defer os.RemoveAll(dstDir)
+
+	const N = 100
+	exp := testutils.GenItems(0, N, 1)
+	require.NoError(t, srcBuck.Push(exp))
+
+	// move the first elem:
+	moved, nshoveled, err := srcBuck.Shovel(1, nil, dstBuck)
+	require.NoError(t, err)
+	require.Equal(t, exp[0], moved[0])
+	require.Equal(t, 1, nshoveled)
+
+	// move the rest:
+	moved, nshoveled, err = srcBuck.Shovel(N-1, nil, dstBuck)
+	require.NoError(t, err)
+	require.Equal(t, exp[1:], moved)
+	require.Equal(t, N-1, nshoveled)
+
+	require.NoError(t, srcBuck.Close())
+	require.NoError(t, dstBuck.Close())
+}
+
 // TODO: Tests:
 // - overlapping pushes.
 // - key function (api)
@@ -264,4 +295,3 @@ func TestPeek(t *testing.T) {
 //   - bucket deleted?
 //   - popped items really gone?
 // - iter tests for buckets.
-// - peek

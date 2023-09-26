@@ -9,6 +9,8 @@ import (
 )
 
 func TestMoveFile(t *testing.T) {
+	t.Parallel()
+
 	dir, err := os.MkdirTemp("", "timeq-copyfile")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)

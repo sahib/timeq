@@ -23,6 +23,8 @@ func writeDummyBucket(t *testing.T, dir string, key item.Key, items item.Items) 
 }
 
 func TestBucketsOpenEmpty(t *testing.T) {
+	t.Parallel()
+
 	dir, err := os.MkdirTemp("", "timeq-bucketstest")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
@@ -35,6 +37,8 @@ func TestBucketsOpenEmpty(t *testing.T) {
 }
 
 func TestBucketsClearEmpty(t *testing.T) {
+	t.Parallel()
+
 	dir, err := os.MkdirTemp("", "timeq-bucketstest")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
@@ -46,6 +50,8 @@ func TestBucketsClearEmpty(t *testing.T) {
 }
 
 func TestBucketsIter(t *testing.T) {
+	t.Parallel()
+
 	dir, err := os.MkdirTemp("", "timeq-bucketstest")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
@@ -80,6 +86,8 @@ func TestBucketsIter(t *testing.T) {
 }
 
 func TestBucketsForKey(t *testing.T) {
+	t.Parallel()
+
 	dir, err := os.MkdirTemp("", "timeq-bucketstest")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
@@ -117,6 +125,8 @@ func TestBucketsForKey(t *testing.T) {
 }
 
 func TestBucketsValidateFunc(t *testing.T) {
+	t.Parallel()
+
 	dir, err := os.MkdirTemp("", "timeq-bucketstest")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
