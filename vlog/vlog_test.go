@@ -111,3 +111,37 @@ func TestLogShrink(t *testing.T) {
 	require.NoError(t, iter.Err())
 	require.NoError(t, log.Close())
 }
+
+func TestLogOpenNonExisting(t *testing.T) {
+	_, err := Open("/nope", true)
+	require.Error(t, err)
+}
+
+func TestLogNextSize(t *testing.T) {
+	var kb int64 = 1024
+	var mb int64 = 1024 * kb
+	require.Equal(t, int64(0), nextSize(-1))
+	require.Equal(t, 8*PageSize, nextSize(0))
+	require.Equal(t, 8*PageSize, nextSize(1))
+
+	require.Equal(t, 14*PageSize, nextSize(200*kb)-200*kb)
+	require.Equal(t, 32*PageSize, nextSize(1*mb)-1*mb)
+	require.Equal(t, 64*PageSize, nextSize(10*mb)-10*mb)
+	require.Equal(t, 128*PageSize, nextSize(100*mb)-100*mb)
+}
+
+func TestLogRemap(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "timeq-vlogtest")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	log, err := Open(filepath.Join(tmpDir, "log"), true)
+	require.NoError(t, err)
+
+	// that's enough to trigger the grow quite a few times:
+	for idx := 0; idx < 100; idx++ {
+		log.Push(testutils.GenItems(0, 200, 1))
+	}
+
+	require.NoError(t, log.Close())
+}

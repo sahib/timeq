@@ -25,27 +25,31 @@ func init() {
 }
 
 func nextSize(size int64) int64 {
+	if size < 0 {
+		return 0
+	}
+
 	currPages := size / PageSize
 
 	// decide on how much to increase:
 	var shift int
-	var mb int64 = 1024 * 1024
+	const mb int64 = 1024 * 1024
 	switch {
+	case size >= (100 * mb):
+		// 128 pages per block:
+		shift = 7
+	case size >= (10 * mb):
+		// 64 pages per block
+		shift = 6
+	case size >= (1 * mb):
+		// 32 pages per block
+		shift = 5
+	case size >= 200*1024:
+		// 16 pages per block
+		shift = 4
 	default:
 		// 8 pages per block
 		shift = 3
-	case size > 200*1024:
-		// 16 pages per block
-		shift = 4
-	case size > (1 * mb):
-		// 32 pages per block
-		shift = 5
-	case size > (10 * mb):
-		// 64 pages per block
-		shift = 6
-	case size > (100 * mb):
-		// 128 pages per block:
-		shift = 7
 	}
 
 	// use shift to round to next page alignment:
@@ -55,10 +59,10 @@ func nextSize(size int64) int64 {
 
 func Open(path string, syncOnWrite bool) (*Log, error) {
 	l := &Log{
-		// this will lazy-initialze on first access:
 		path:        path,
 		syncOnWrite: syncOnWrite,
 	}
+
 	return l, l.init()
 }
 
@@ -117,7 +121,9 @@ func (l *Log) init() error {
 }
 
 func (l *Log) shrink() int64 {
-	// shrink assumes that 1 byte is written after the
+	// we take advantage of the end marker appended to each
+	// log entry. Since ftruncate() will always pad with zeroes
+	// it's easy for us to find the beginning of the file.
 	idx := l.size - 1
 	for ; idx >= 0 && l.mmap[idx] == 0; idx-- {
 	}
@@ -208,10 +214,6 @@ func (l *Log) findNextItem(off item.Off) item.Off {
 
 func (l *Log) readItemAt(off item.Off, it *item.Item) (err error) {
 	if int64(off)+item.HeaderSize >= l.size {
-		// NOTE: This might happen in valid cases: i.e. when the initial size
-		// is determined we iterate until the end of the WAL. If the last item
-		// happens to be cut off we would throw an error here. In this case we
-		// just want to stop iterating.
 		return nil
 	}
 
@@ -259,19 +261,10 @@ func (l *Log) Sync(force bool) error {
 		return nil
 	}
 
-	if len(l.mmap) == 0 {
-		return nil
-	}
-
 	return unix.Msync(l.mmap, unix.MS_SYNC)
 }
 
 func (l *Log) Close() error {
-	if len(l.mmap) == 0 {
-		// not yet loaded.
-		return nil
-	}
-
 	syncErr := unix.Msync(l.mmap, unix.MS_SYNC)
 	unmapErr := unix.Munmap(l.mmap)
 	closeErr := l.fd.Close()
