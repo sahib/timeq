@@ -142,7 +142,12 @@ your similar guarantees. At this point, this was not really tested in the wild y
 My recommendation is designing your application logic in a way that allows duplicate
 items to be handled from the queue.
 
-TODO: Describe how timeq is tested (small code base, coverage, fuzz tests)
+The test suite is currently roughly as big as the codebase. The best protection
+against bugs is a small code base though, so that's not too impressive yet.
+We're working on improving the testsuite (which is a never ending task). The
+actual coverage is higher than what is shown in `make test` since most
+higher-level tests also test lower-level functionality. Additionally we have a
+bunch of benchmarks and fuzzing tests.
 
 ## License
 
@@ -154,10 +159,9 @@ Chris Pahl [@sahib](https://github.com/sahib)
 
 ## TODO List
 
-- [ ] Improve test coverage / extend test suite
-- [ ] Add fuzzing test for Push/Pop
-- [ ] Add way to run test as separate process that can be crashed randomly
-- [ ] Profile and optimize a bit more, if possible.
+- [x] Add fuzzing test for Push/Pop
 - [x] Use a configurable logger for warnings
 - [x] We crash currently when running out of space.
 - [x] Figure out error handling. If a bucket is unreadable, fail or continue?
+- [ ] Improve test coverage / extend test suite
+- [ ] Profile and optimize a bit more, if possible.

@@ -92,7 +92,7 @@ func TestLogShrink(t *testing.T) {
 	require.NoError(t, err)
 
 	var it item.Item
-	iter := log.At(firstLoc)
+	iter := log.At(firstLoc, true)
 	require.True(t, iter.Next(&it))
 	require.Equal(t, item.Item{
 		Key:  1,
@@ -100,7 +100,7 @@ func TestLogShrink(t *testing.T) {
 	}, it)
 	require.False(t, iter.Next(&it))
 
-	iter = log.At(sndLoc)
+	iter = log.At(sndLoc, true)
 	require.True(t, iter.Next(&it))
 	require.Equal(t, item.Item{
 		Key:  2,
@@ -144,4 +144,32 @@ func TestLogRemap(t *testing.T) {
 	}
 
 	require.NoError(t, log.Close())
+}
+
+func TestLogFindNextItem(t *testing.T) {
+	l := &Log{
+		mmap: make([]byte, 200),
+	}
+
+	item1 := item.Item{Key: 23, Blob: []byte("blob1")}
+	item2 := item.Item{Key: 42, Blob: []byte("blob2")}
+
+	l.writeItem(item1)
+	l.writeItem(item2)
+
+	expOffset1 := item1.StorageSize()
+	expOffset2 := expOffset1 + item2.StorageSize()
+	nextItemOff := l.findNextItem(0)
+	require.Equal(t, expOffset1, nextItemOff)
+	require.Equal(t, uint8(0xFF), l.mmap[nextItemOff-1])
+	require.Equal(t, uint8(0xFF), l.mmap[nextItemOff-2])
+
+	nextNextItemOff := l.findNextItem(nextItemOff)
+	require.Equal(t, expOffset2, nextNextItemOff)
+	require.Equal(t, uint8(0xFF), l.mmap[nextNextItemOff-1])
+	require.Equal(t, uint8(0xFF), l.mmap[nextNextItemOff-2])
+
+	// should not progress further (i.e.) beyond size:
+	require.Equal(t, item.Off(l.size), nextNextItemOff)
+	require.Equal(t, nextNextItemOff, l.findNextItem(nextNextItemOff))
 }

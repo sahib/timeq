@@ -287,11 +287,3 @@ func TestBucketShovel(t *testing.T) {
 	require.NoError(t, srcBuck.Close())
 	require.NoError(t, dstBuck.Close())
 }
-
-// TODO: Tests:
-// - overlapping pushes.
-// - key function (api)
-// - re-open tests:
-//   - bucket deleted?
-//   - popped items really gone?
-// - iter tests for buckets.

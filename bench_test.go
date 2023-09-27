@@ -20,8 +20,8 @@ func benchmarkPushPopWithSyncMode(b *testing.B, benchmarkPush bool, syncMode buc
 	opts := DefaultOptions()
 	opts.SyncMode = syncMode
 
-	bucketDir := filepath.Join(dir, item.Key(23).String())
-	queue, err := Open(bucketDir, opts)
+	queueDir := filepath.Join(dir, item.Key(23).String())
+	queue, err := Open(queueDir, opts)
 	require.NoError(b, err)
 
 	// Add some dummy data:

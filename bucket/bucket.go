@@ -141,10 +141,19 @@ func (b *Bucket) Push(items item.Items) (outErr error) {
 	return nil
 }
 
+func (b *Bucket) logAt(loc item.Location) vlog.LogIter {
+	continueOnErr := true
+	if b.opts.ErrorMode == ErrorModeAbort {
+		continueOnErr = false
+	}
+
+	return b.log.At(loc, continueOnErr)
+}
+
 // addPopIter adds a new batchIter to `batchIters` and advances the idxIter.
 func (b *Bucket) addPopIter(batchIters *vlog.LogIters, idxIter *index.Iter) (bool, error) {
 	loc := idxIter.Value()
-	batchIter := b.log.At(loc)
+	batchIter := b.logAt(loc)
 	if !batchIter.Next(nil) {
 		// might be empty or I/O error:
 		return false, batchIter.Err()
@@ -335,7 +344,7 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 		var partialItem item.Item
 		var partialLoc item.Location
 
-		logIter := b.log.At(loc)
+		logIter := b.logAt(loc)
 		for logIter.Next(&partialItem) {
 			partialLoc = logIter.CurrentLocation()
 			if partialItem.Key >= key {

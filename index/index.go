@@ -24,7 +24,7 @@ func FromVlog(log *vlog.Log) (*Index, error) {
 	iter := log.At(item.Location{
 		Off: 0,
 		Len: ^item.Off(0),
-	})
+	}, true)
 
 	index := &Index{}
 

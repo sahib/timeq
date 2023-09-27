@@ -1,6 +1,7 @@
 package vlog
 
 import (
+	"container/heap"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,7 +37,7 @@ func TestIter(t *testing.T) {
 
 	var count int
 	var it item.Item
-	iter := log.At(loc)
+	iter := log.At(loc, true)
 	for iter.Next(&it) {
 		require.Equal(t, item.Item{
 			Key:  item.Key(count + 10),
@@ -67,7 +68,7 @@ func TestIterEmpty(t *testing.T) {
 
 	log, err := Open(filepath.Join(tmpDir, "log"), true)
 	require.NoError(t, err)
-	iter := log.At(item.Location{})
+	iter := log.At(item.Location{}, true)
 
 	var it item.Item
 	require.False(t, iter.Next(&it))
@@ -87,11 +88,88 @@ func TestIterInvalidLocation(t *testing.T) {
 	iter := log.At(item.Location{
 		Off: 0x2A,
 		Len: 1000,
-	})
+	}, true)
 
 	var it item.Item
 	require.False(t, iter.Next(&it))
 	require.True(t, iter.Exhausted())
 	require.NoError(t, iter.Err())
 	require.NoError(t, log.Close())
+}
+
+func TestIterBrokenStream(t *testing.T) {
+	t.Parallel()
+
+	for _, continueOnErr := range []bool{false, true} {
+		for idx := 0; idx < 4; idx++ {
+			t.Run(fmt.Sprintf("%d-continue-%v", idx, continueOnErr), func(t *testing.T) {
+				// depending on which index of the size field
+				// is overwritten we test for different errors.
+				testIterBrokenStream(t, idx, continueOnErr)
+			})
+		}
+	}
+}
+
+func testIterBrokenStream(t *testing.T, overwriteIndex int, continueOnErr bool) {
+	t.Parallel()
+
+	tmpDir, err := os.MkdirTemp("", "timeq-vlogtest")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	log, err := Open(filepath.Join(tmpDir, "log"), true)
+	require.NoError(t, err)
+
+	item1 := item.Item{Key: 23, Blob: []byte("blob1")}
+	item2 := item.Item{Key: 42, Blob: []byte("blob2")}
+
+	loc, err := log.Push(item.Items{item1, item2})
+	require.NoError(t, err)
+
+	// Modify the size field to make bigger than log.size
+	log.mmap[overwriteIndex] = 0xFF
+
+	// The iterator should be able to figure out the next
+	// value at least:
+	iter := log.At(loc, continueOnErr)
+	var it item.Item
+	if continueOnErr {
+		require.True(t, iter.Next(&it))
+		require.Equal(t, item.Key(42), it.Key)
+		require.Equal(t, item2.Blob, it.Blob)
+	}
+	require.False(t, iter.Next(&it))
+}
+
+func TestIterHeap(t *testing.T) {
+	iters := LogIters{}
+	itersHeap := &iters
+	heap.Init(itersHeap)
+	require.Equal(t, 0, itersHeap.Len())
+
+	heap.Push(itersHeap, LogIter{
+		exhausted: true,
+		item:      item.Item{Key: 100},
+	})
+	heap.Push(itersHeap, LogIter{
+		exhausted: false,
+		item:      item.Item{Key: 50},
+	})
+	heap.Push(itersHeap, LogIter{
+		exhausted: false,
+		item:      item.Item{Key: 0},
+	})
+
+	it1 := heap.Pop(itersHeap).(LogIter)
+	it2 := heap.Pop(itersHeap).(LogIter)
+	it3 := heap.Pop(itersHeap).(LogIter)
+
+	require.False(t, it1.Exhausted())
+	require.False(t, it2.Exhausted())
+	require.True(t, it3.Exhausted())
+
+	require.Equal(t, item.Key(0), it1.CurrentLocation().Key)
+	require.Equal(t, item.Key(50), it2.CurrentLocation().Key)
+	require.Equal(t, item.Key(100), it3.CurrentLocation().Key)
 }

@@ -53,7 +53,7 @@ func (fi *Reader) Err() error {
 }
 
 // ReadTrailer reads the trailer of the index log.
-// It contains the number of batches
+// It contains the number of entries in the index.
 func ReadTrailer(path string) (Trailer, error) {
 	fd, err := os.Open(path)
 	if err != nil {

@@ -131,7 +131,7 @@ func (l *Log) shrink() int64 {
 	return idx + 1
 }
 
-func (l *Log) writeItem(it item.Item) int64 {
+func (l *Log) writeItem(it item.Item) {
 	off := l.size
 	binary.BigEndian.PutUint32(l.mmap[off:], uint32(len(it.Blob)))
 	off += 4
@@ -142,7 +142,7 @@ func (l *Log) writeItem(it item.Item) int64 {
 	// add trailer mark:
 	l.mmap[off+0] = 0xFF
 	l.mmap[off+1] = 0xFF
-	return off + item.TrailerSize
+	l.size = off + item.TrailerSize
 }
 
 func (l *Log) Push(items item.Items) (loc item.Location, err error) {
@@ -180,7 +180,7 @@ func (l *Log) Push(items item.Items) (loc item.Location, err error) {
 
 	// copy the items to the file map:
 	for i := 0; i < len(items); i++ {
-		l.size = l.writeItem(items[i])
+		l.writeItem(items[i])
 	}
 
 	if err = l.Sync(false); err != nil {
@@ -191,25 +191,32 @@ func (l *Log) Push(items item.Items) (loc item.Location, err error) {
 	return loc, nil
 }
 
-func (l *Log) At(loc item.Location) LogIter {
+func (l *Log) At(loc item.Location, continueOnErr bool) LogIter {
 	return LogIter{
-		firstKey: loc.Key,
-		currOff:  loc.Off,
-		currLen:  loc.Len,
-		log:      l,
+		firstKey:      loc.Key,
+		currOff:       loc.Off,
+		currLen:       loc.Len,
+		log:           l,
+		continueOnErr: continueOnErr,
 	}
 }
 
-// TODO: write a test for this.
 func (l *Log) findNextItem(off item.Off) item.Off {
-	for idx := off + 1; idx < item.Off(l.size-1); idx++ {
+	offSize := item.Off(l.size)
+
+	for idx := off + 1; idx < offSize-1; idx++ {
 		if l.mmap[idx] == 0xFF && l.mmap[idx+1] == 0xFF {
 			// we found a marker.
-			return idx + 2
+			nextItemIdx := idx + 2
+			if nextItemIdx >= offSize {
+				return offSize
+			}
+
+			return nextItemIdx
 		}
 	}
 
-	return item.Off(l.size)
+	return offSize
 }
 
 func (l *Log) readItemAt(off item.Off, it *item.Item) (err error) {

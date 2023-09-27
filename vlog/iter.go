@@ -12,6 +12,7 @@ type LogIter struct {
 	exhausted        bool
 	log              *Log
 	err              error
+	continueOnErr    bool
 }
 
 func (li *LogIter) Next(itDst *item.Item) bool {
@@ -28,10 +29,12 @@ func (li *LogIter) Next(itDst *item.Item) bool {
 
 	for {
 		if err := li.log.readItemAt(li.currOff, &li.item); err != nil {
-			// TODO: We should somehow find out if it's an I/O error (no sense to continue)
-			// TODO: Also we should honor the error mode here.
+			if !li.continueOnErr {
+				li.err = err
+				li.exhausted = true
+				return false
+			}
 
-			// There was some error while reading the WAL.
 			li.currOff = li.log.findNextItem(li.currOff)
 			if li.currOff >= item.Off(li.log.size) {
 				li.exhausted = true
@@ -43,9 +46,6 @@ func (li *LogIter) Next(itDst *item.Item) bool {
 
 		break
 	}
-
-	// TODO: can we validate the order of the key to detect read errors?
-	//       (in a batch prevKey must be <= currKey)
 
 	if len(li.item.Blob) == 0 {
 		// this can happen at the very end of the log
@@ -109,7 +109,7 @@ func (ls LogIters) Less(i, j int) bool {
 	ii, ij := ls[i], ls[j]
 	if ii.exhausted != ij.exhausted {
 		// sort exhausted iters to the back
-		return !ls[i].exhausted
+		return !ii.exhausted
 	}
 
 	ki, kj := ii.item.Key, ij.item.Key
@@ -121,6 +121,7 @@ func (ls *LogIters) Push(x any) {
 }
 
 func (ls *LogIters) Pop() any {
+	// NOTE: This is currently unused.
 	old := *ls
 	n := len(old)
 	x := old[n-1]
