@@ -11,23 +11,22 @@ A persistent priority queue in Go.
 ## Features
 
 - Clean and well test code base based on Go 1.21.
+- High throughput.
+- Tiny memory footprint.
+- Simple interface with classic `Push()` and `Pop()` and only few other functions.
 - Configurable durability behavior.
-- High (enough) throughput.
-- Small memory footprint.
-- Simple interface with classic `Push()` and `Pop()` and only
-  few other functions.
 
-This implementation does currently not seek to be generally useful but seeks to
-be high performant and understandable at the same time. We make the following
-assumption for optimal performance:
+This implementation should be generally useful, despite the ``time`` in the name.
+However, the initial design had timestamps as priority keys in mind. For best
+performance the following assumptions were made:
 
-- Your OS supports `mmap()` and `mremap()` (tested on Linux)
-- Seeking is not too expensive (i.e. no rotating disks)
+- Your OS supports `mmap()` and `mremap()` (i.e. Linux/FreeBSD)
+- Seeking in files is cheap (i.e. no HDD)
 - The priority key ideally increases without much duplicates (like timestamps, see [FAQ](#FAQ)).
-- You push and pop your data in, ideally big, batches.
+- You push and pop your data in, ideally, big batches.
 - File storage is not a primary concern (i.e. no compression implemented).
 - The underlying storage has a low risk for write errors or bit flips.
-- You trust your data safety to some random dude on the internet (don't we all?).
+- You trust your data to some random dude's code on the internet (don't we all?).
 
 If some of those assumptions do not fit your usecase and you still managed to make it work,
 I would be happy for some feedback or even pull requests to improve the general usability.
@@ -38,8 +37,9 @@ My primary usecase was a embedded linux device that has different services that 
 a stream of data that needs to be send to the cloud. For this the data was required to be
 in ascending order (sorted by time) and also needed to be buffered with tight memory boundaries.
 
-A previous attempt with ``sqlite3`` did work well but was much slower than it had to be (also
-due to the heavy cost of ``cgo``). This motivated to write this queue implementation.
+A previous attempt with ``sqlite3`` did work kinda well but was much slower
+than it had to be (also due to the heavy cost of ``cgo``). This motivated me to
+write this queue implementation.
 
 ## Usage
 
@@ -58,10 +58,10 @@ $ go install github.com/sahib/timeq/cmd@latest
 
 ## Benchmarks
 
-The included benchmark pushes 2000 items with a payload of 40 byte per operation.
+The [included benchmark](https://github.com/sahib/timeq/blob/main/bench_test.go#L15) pushes 2000 items with a payload of 40 byte per operation.
 
 ```
-$ go test -bench=. -run=xxx
+$ make bench
 goos: linux
 goarch: amd64
 pkg: github.com/sahib/timeq
@@ -80,15 +80,15 @@ BenchmarkPushSyncFull-16     	  19994	    59491 ns/op	     72 B/op	      2 alloc
 
 * All data is divided into buckets by a user-defined function.
 * Each bucket is it's own priority queue, responsible for a part of the key space.
-* A push to a bucket writes the batch of data to a memory-mapped
-  Write-Ahead-Log (WAL) file on disk. The location of the batch is stored in an
+* A push to a bucket writes the batch of data to a memory-mapped log
+  file on disk. The location of the batch is stored in an
   in-memory index and to a index WAL.
 * On pop we select the bucket with the lowest key first and ask the index to give
   us the location of the lowest batch. Once done the index is updated to mark the
-  items as popped. The data stays intact in the data WAL.
+  items as popped. The data stays intact in the data log.
 * Once a bucket was completely drained it is removed from disk to retain space.
 
-Since the index is quite small (only one entry per batch) we can fit it in memory.
+Since the index is quite small (only one entry per batch) we can easily fit it in memory.
 On the initial load all bucket indexes are loaded, but no memory is mapped yet.
 
 ## FAQ:
@@ -104,8 +104,8 @@ of the existing benchmarks to test your assumptions.
 
 ### Why should I care about buckets?
 
-Most improtantly: Only the buckets are loaded that are actually used.
-This let's the memory requirement of `timeq` be extremely small.
+Most importantly: Only buckets are loaded which are being in use.
+This allows a very small footprint, especially if the push intput is already roughly sorted.
 
 There are also some other reasons:
 
@@ -115,7 +115,7 @@ There are also some other reasons:
 
 ### Can I store more than one value per key?
 
-Yes, you can. The index may store more than one batch per key. There is a
+Yes, no problem. The index may store more than one batch per key. There is a
 slight allocation overhead though on ``Queue.Push()`` though. Since ``timeq``
 was mostly optimized for mostly-unique keys (i.e. timestamps) you might see
 better performance with less duplicates.
