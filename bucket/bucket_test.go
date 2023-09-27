@@ -260,7 +260,7 @@ func TestPeek(t *testing.T) {
 	})
 }
 
-func TestBucketShovel(t *testing.T) {
+func TestBucketMove(t *testing.T) {
 	t.Parallel()
 
 	srcBuck, srcDir := createEmptyBucket(t)
@@ -273,13 +273,13 @@ func TestBucketShovel(t *testing.T) {
 	require.NoError(t, srcBuck.Push(exp))
 
 	// move the first elem:
-	moved, nshoveled, err := srcBuck.Shovel(1, nil, dstBuck)
+	moved, nshoveled, err := srcBuck.Move(1, nil, dstBuck)
 	require.NoError(t, err)
 	require.Equal(t, exp[0], moved[0])
 	require.Equal(t, 1, nshoveled)
 
 	// move the rest:
-	moved, nshoveled, err = srcBuck.Shovel(N-1, nil, dstBuck)
+	moved, nshoveled, err = srcBuck.Move(N-1, nil, dstBuck)
 	require.NoError(t, err)
 	require.Equal(t, exp[1:], moved)
 	require.Equal(t, N-1, nshoveled)

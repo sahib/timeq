@@ -147,6 +147,12 @@ func (q *Queue) Push(items Items) error {
 	return nil
 }
 
+const (
+	peek = 0
+	pop  = 1
+	move = 2
+)
+
 // Pop fetches up to `n` items from the queue. It will only return
 // less items if the queue does not hold more items. If an error
 // occured no items are returned. If n < 0 then as many items as possible
@@ -163,21 +169,24 @@ func (q *Queue) Push(items Items) error {
 // causing segfaults when still accessing them. If you need the items
 // for later, then use item.Copy() before your next call.
 func (q *Queue) Pop(n int, dst Items) (Items, error) {
-	return q.popOrPeek(pop, n, dst)
+	return q.popOp(pop, n, dst, nil)
 }
-
-const (
-	peek = 0
-	pop  = 1
-)
 
 // Peek works like Pop, but does not delete the items in the queue.
 // Note that calling Peek() twice will yield the same result.
 func (q *Queue) Peek(n int, dst Items) (Items, error) {
-	return q.popOrPeek(peek, n, dst)
+	return q.popOp(peek, n, dst, nil)
 }
 
-func (q *Queue) popOrPeek(op int, n int, dst Items) (Items, error) {
+// Move works like Pop, but does push the popped items to `dstQueue`.
+// This is its own operation since the data is only deleted from `q`
+// when the push was synced on `dstQueue`. This is safer than using
+// the Push/Pop itself.
+func (q *Queue) Move(n int, dst Items, dstQueue *Queue) (Items, error) {
+	return q.popOp(move, n, dst, dstQueue)
+}
+
+func (q *Queue) popOp(op int, n int, dst Items, dstQueue *Queue) (Items, error) {
 	if n < 0 {
 		// use max value in this case:
 		n = int(^uint(0) >> 1)
@@ -190,8 +199,23 @@ func (q *Queue) popOrPeek(op int, n int, dst Items) (Items, error) {
 	var count = n
 	return dst, q.buckets.Iter(bucket.Load, func(_ item.Key, b *bucket.Bucket) error {
 		fn := b.Pop
-		if op == peek {
+		switch op {
+		case pop:
+			fn = b.Pop
+		case peek:
 			fn = b.Peek
+		case move:
+			// Move() has a slightly different signature, so adapter is needed.
+			fn = func(count int, dst item.Items) (item.Items, int, error) {
+				dstBuck, err := dstQueue.buckets.ForKey(b.Key())
+				if err != nil {
+					return dst, 0, nil
+				}
+
+				return b.Move(count, dst, dstBuck)
+			}
+		default:
+			panic("invalid op")
 		}
 
 		newDst, nitems, err := fn(count, dst)

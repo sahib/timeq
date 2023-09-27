@@ -1,6 +1,7 @@
 package timeq
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -263,4 +264,50 @@ func TestAPClear(t *testing.T) {
 	require.Equal(t, 0, queue.Len())
 
 	require.NoError(t, queue.Close())
+}
+
+func TestAPIMove(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	srcDir := filepath.Join(dir, "src")
+	dstDir := filepath.Join(dir, "dst")
+
+	opts := DefaultOptions()
+	opts.BucketFunc = func(k Key) Key {
+		return (k / 100) * 100
+	}
+
+	srcQueue, err := Open(srcDir, opts)
+	require.NoError(t, err)
+
+	dstQueue, err := Open(dstDir, opts)
+	require.NoError(t, err)
+
+	exp := testutils.GenItems(0, 200, 1)
+	require.NoError(t, srcQueue.Push(exp))
+	require.Equal(t, len(exp), srcQueue.Len())
+	require.Equal(t, 0, dstQueue.Len())
+
+	fmt.Println("---")
+	got, err := srcQueue.Move(len(exp), nil, dstQueue)
+	fmt.Println("===")
+	require.NoError(t, err)
+	require.Equal(t, exp, got)
+
+	require.Equal(t, 0, srcQueue.Len())
+	require.Equal(t, len(exp), dstQueue.Len())
+
+	gotMoved, err := dstQueue.Pop(len(exp), nil)
+	require.NoError(t, err)
+	require.Equal(t, exp, gotMoved)
+
+	require.Equal(t, 0, srcQueue.Len())
+	require.Equal(t, 0, dstQueue.Len())
+
+	require.NoError(t, srcQueue.Close())
+	require.NoError(t, dstQueue.Close())
 }

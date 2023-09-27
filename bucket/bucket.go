@@ -198,11 +198,11 @@ func (b *Bucket) Peek(n int, dst item.Items) (item.Items, int, error) {
 	return items, npopped, err
 }
 
-// Shovel moves data between two buckets in a safer way. In case of
+// Move moves data between two buckets in a safer way. In case of
 // crashes the data might be present in the destination queue, but is
 // not yet deleted from the source queue. Callers should be ready to
 // handle duplicates.
-func (b *Bucket) Shovel(n int, dst item.Items, dstBuck *Bucket) (item.Items, int, error) {
+func (b *Bucket) Move(n int, dst item.Items, dstBuck *Bucket) (item.Items, int, error) {
 	if n <= 0 {
 		// technically that's a valid usecase.
 		return dst, 0, nil
@@ -216,7 +216,7 @@ func (b *Bucket) Shovel(n int, dst item.Items, dstBuck *Bucket) (item.Items, int
 		return items, npopped, err
 	}
 
-	if err := dstBuck.Push(items); err != nil {
+	if err := dstBuck.Push(items[len(dst):]); err != nil {
 		return items, npopped, err
 	}
 
