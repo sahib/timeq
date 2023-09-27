@@ -287,6 +287,10 @@ func (b *Bucket) peek(n int, dst item.Items) (batchIters *vlog.LogIters, outItem
 }
 
 func (b *Bucket) popSync(batchIters *vlog.LogIters) error {
+	if batchIters == nil || len(*batchIters) == 0 {
+		return nil
+	}
+
 	// NOTE: In theory we could also use fallocate(FALLOC_FL_ZERO_RANGE) on
 	// ext4 to "put holes" into the log file where we read batches from to save
 	// some space early. This would make sense only for very big buckets
