@@ -21,13 +21,13 @@ func TestIndexReadTrailer(t *testing.T) {
 	require.NoError(t, err)
 
 	for idx := item.Off(0); idx <= 123; idx++ {
-		idxWriter.Push(item.Location{
+		require.NoError(t, idxWriter.Push(item.Location{
 			Key: item.Key(idx),
 			Off: idx,
 			Len: idx,
 		}, Trailer{
 			TotalEntries: idx,
-		})
+		}))
 	}
 
 	require.NoError(t, idxWriter.Close())

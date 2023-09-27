@@ -135,13 +135,24 @@ func TestLogRemap(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	log, err := Open(filepath.Join(tmpDir, "log"), true)
+	logPath := filepath.Join(tmpDir, "log")
+	log, err := Open(logPath, true)
 	require.NoError(t, err)
+
+	infoBefore, err := os.Stat(logPath)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), infoBefore.Size()%PageSize)
 
 	// that's enough to trigger the grow quite a few times:
 	for idx := 0; idx < 100; idx++ {
-		log.Push(testutils.GenItems(0, 200, 1))
+		_, err := log.Push(testutils.GenItems(0, 200, 1))
+		require.NoError(t, err)
 	}
+
+	infoAfter, err := os.Stat(logPath)
+	require.NoError(t, err)
+	require.True(t, infoAfter.Size() > infoBefore.Size())
+	require.Equal(t, int64(0), infoAfter.Size()%PageSize)
 
 	require.NoError(t, log.Close())
 }

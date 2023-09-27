@@ -198,7 +198,7 @@ func (q *Queue) popOp(op int, n int, dst Items, dstQueue *Queue) (Items, error) 
 
 	var count = n
 	return dst, q.buckets.Iter(bucket.Load, func(_ item.Key, b *bucket.Bucket) error {
-		fn := b.Pop
+		var fn func(n int, dst item.Items) (item.Items, int, error)
 		switch op {
 		case pop:
 			fn = b.Pop
