@@ -171,7 +171,11 @@ func (l *Log) Push(items item.Items) (loc item.Location, err error) {
 		}
 
 		// If we're unlucky we gonna have to move it:
-		l.mmap, err = unix.Mremap(l.mmap, int(nextMmapSize), unix.MREMAP_MAYMOVE)
+		l.mmap, err = unix.Mremap(
+			l.mmap,
+			int(nextMmapSize),
+			unix.MREMAP_MAYMOVE,
+		)
 		if err != nil {
 			err = fmt.Errorf("remap: %w", err)
 			return

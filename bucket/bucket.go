@@ -14,6 +14,10 @@ import (
 	"github.com/sahib/timeq/vlog"
 )
 
+const (
+	DataLogName = "dat.log"
+)
+
 type Bucket struct {
 	mu     sync.Mutex
 	dir    string
@@ -42,11 +46,13 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 	// * This causes a SIGBUS to be send to our process. By default Go crashes the program
 	//   and prints a stack trace. Changing this to a recoverable panic allows us to intervene
 	//   and continue execution with a proper error return.
+	//
+	// Other errors like suddenl deleted database files might cause this too.
 	debug.SetPanicOnFault(true)
 
 	defer recoverMmapError(&outErr)
 
-	log, err := vlog.Open(filepath.Join(dir, "dat.log"), opts.SyncMode&SyncData > 0)
+	log, err := vlog.Open(filepath.Join(dir, DataLogName), opts.SyncMode&SyncData > 0)
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}
@@ -113,7 +119,7 @@ func (b *Bucket) Close() error {
 func recoverMmapError(dstErr *error) {
 	// See comment in Open()
 	if recErr := recover(); recErr != nil {
-		*dstErr = fmt.Errorf("panic (do you have enough space left?): %v", recErr)
+		*dstErr = fmt.Errorf("panic (check: enough space left / file issues): %v", recErr)
 	}
 }
 
@@ -325,7 +331,9 @@ func (b *Bucket) popSync(batchIters *vlog.LogIters) error {
 	return b.idxLog.Sync(false)
 }
 
-func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
+func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
+	defer recoverMmapError(&outErr)
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -335,7 +343,6 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 	}
 
 	var deleteEntries []item.Key
-	var numDeleted int
 	for iter := b.idx.Iter(); iter.Next(); {
 		loc := iter.Value()
 		if loc.Key >= key {
@@ -365,10 +372,10 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 				Off: partialLoc.Off,
 				Len: partialLoc.Len,
 			})
-			numDeleted += int(loc.Len - partialLoc.Len)
+			ndeleted += int(loc.Len - partialLoc.Len)
 		} else {
 			// nothing found, this index entry can be dropped.
-			numDeleted += int(loc.Len)
+			ndeleted += int(loc.Len)
 		}
 
 		deleteEntries = append(deleteEntries, loc.Key)
@@ -378,7 +385,7 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (int, error) {
 		b.idx.Delete(key)
 	}
 
-	return numDeleted, b.idxLog.Sync(false)
+	return ndeleted, b.idxLog.Sync(false)
 }
 
 func (b *Bucket) Empty() bool {
