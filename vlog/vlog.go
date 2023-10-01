@@ -195,8 +195,8 @@ func (l *Log) Push(items item.Items) (loc item.Location, err error) {
 	return loc, nil
 }
 
-func (l *Log) At(loc item.Location, continueOnErr bool) LogIter {
-	return LogIter{
+func (l *Log) At(loc item.Location, continueOnErr bool) Iter {
+	return Iter{
 		firstKey:      loc.Key,
 		currOff:       loc.Off,
 		currLen:       loc.Len,

@@ -147,7 +147,7 @@ func (b *Bucket) Push(items item.Items) (outErr error) {
 	return nil
 }
 
-func (b *Bucket) logAt(loc item.Location) vlog.LogIter {
+func (b *Bucket) logAt(loc item.Location) vlog.Iter {
 	continueOnErr := true
 	if b.opts.ErrorMode == ErrorModeAbort {
 		continueOnErr = false
@@ -157,7 +157,7 @@ func (b *Bucket) logAt(loc item.Location) vlog.LogIter {
 }
 
 // addPopIter adds a new batchIter to `batchIters` and advances the idxIter.
-func (b *Bucket) addPopIter(batchIters *vlog.LogIters, idxIter *index.Iter) (bool, error) {
+func (b *Bucket) addPopIter(batchIters *vlog.Iters, idxIter *index.Iter) (bool, error) {
 	loc := idxIter.Value()
 	batchIter := b.logAt(loc)
 	if !batchIter.Next(nil) {
@@ -230,7 +230,7 @@ func (b *Bucket) Move(n int, dst item.Items, dstBuck *Bucket) (item.Items, int, 
 }
 
 // peek reads from the bucket, but does not mark the elements as deleted yet.
-func (b *Bucket) peek(n int, dst item.Items) (batchIters *vlog.LogIters, outItems item.Items, npopped int, outErr error) {
+func (b *Bucket) peek(n int, dst item.Items) (batchIters *vlog.Iters, outItems item.Items, npopped int, outErr error) {
 	defer recoverMmapError(&outErr)
 
 	// Fetch the lowest entry of the index:
@@ -241,7 +241,7 @@ func (b *Bucket) peek(n int, dst item.Items) (batchIters *vlog.LogIters, outItem
 	}
 
 	// initialize with first batch iter:
-	batchItersSlice := make(vlog.LogIters, 0, 1)
+	batchItersSlice := make(vlog.Iters, 0, 1)
 	batchIters = &batchItersSlice
 	indexExhausted, err := b.addPopIter(batchIters, &idxIter)
 	if err != nil {
@@ -292,7 +292,7 @@ func (b *Bucket) peek(n int, dst item.Items) (batchIters *vlog.LogIters, outItem
 	return batchIters, dst, numAppends, nil
 }
 
-func (b *Bucket) popSync(batchIters *vlog.LogIters) error {
+func (b *Bucket) popSync(batchIters *vlog.Iters) error {
 	if batchIters == nil || len(*batchIters) == 0 {
 		return nil
 	}
