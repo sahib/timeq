@@ -3,6 +3,7 @@ package timeq
 import (
 	"fmt"
 	"slices"
+	"errors"
 
 	"github.com/sahib/timeq/bucket"
 	"github.com/sahib/timeq/item"
@@ -57,6 +58,20 @@ func DefaultOptions() Options {
 	}
 }
 
+func (o *Options) Validate() error {
+	if o.Logger == nil {
+		// this allows us to leave out quite some null checks when
+		// using the logger option, even when it's not set.
+		o.Logger =	bucket.NullLogger()
+	}
+
+	if o.BucketFunc == nil {
+		return errors.New("bucket func is not allowed to be empty")
+	}
+
+	return nil
+}
+
 // Queue is the high level API to the priority queue.
 type Queue struct {
 	buckets *bucket.Buckets
@@ -67,6 +82,10 @@ type Queue struct {
 // If `dir` does not exist, then a new, empty priority queue is created.
 // The behavior of the queue can be fine-tuned with `opts`.
 func Open(dir string, opts Options) (*Queue, error) {
+	if err := opts.Validate(); err != nil {
+		return nil, err
+	}
+
 	bs, err := bucket.LoadAll(dir, opts.Options)
 	if err != nil {
 		return nil, fmt.Errorf("buckets: %w", err)
@@ -123,6 +142,7 @@ func (q *Queue) Push(items Items) error {
 	// Sort items into the respective buckets:
 	for len(items) > 0 {
 		keyMod := q.opts.BucketFunc(items[0].Key)
+		nextIdx := binsplit(items, keyMod, q.opts.BucketFunc)
 		buck, err := q.buckets.ForKey(keyMod)
 		if err != nil {
 			if q.opts.ErrorMode == bucket.ErrorModeAbort {
@@ -130,15 +150,14 @@ func (q *Queue) Push(items Items) error {
 			}
 
 			q.opts.Logger.Printf("failed to push: %v", err)
-		}
+		} else {
+			if err := buck.Push(items[:nextIdx]); err != nil {
+				if q.opts.ErrorMode == bucket.ErrorModeAbort {
+					return fmt.Errorf("bucket: push: %w", err)
+				}
 
-		nextIdx := binsplit(items, keyMod, q.opts.BucketFunc)
-		if err := buck.Push(items[:nextIdx]); err != nil {
-			if q.opts.ErrorMode == bucket.ErrorModeAbort {
-				return fmt.Errorf("bucket: push: %w", err)
+				q.opts.Logger.Printf("failed to push: %v", err)
 			}
-
-			q.opts.Logger.Printf("failed to push: %v", err)
 		}
 
 		items = items[nextIdx:]
@@ -192,7 +211,7 @@ func (q *Queue) popOp(op int, n int, dst Items, dstQueue *Queue) (Items, error) 
 		n = int(^uint(0) >> 1)
 	}
 
-	// NOTE: We can't check here if a bucket is empty and delete if
+	// NOTE: We can't check here if a bucket is empty and delete it
 	// afterwards. Otherwise the mmap would be closed and accessing
 	// items we returned can cause a segfault immediately.
 
@@ -215,6 +234,7 @@ func (q *Queue) popOp(op int, n int, dst Items, dstQueue *Queue) (Items, error) 
 				return b.Move(count, dst, dstBuck)
 			}
 		default:
+			// programmer error
 			panic("invalid op")
 		}
 
@@ -272,6 +292,7 @@ func (q *Queue) DeleteLowerThan(key Key) (int, error) {
 	if err != nil {
 		return numDeleted, err
 	}
+
 
 	for _, bucket := range deletableBucks {
 		if err := q.buckets.Delete(bucket.Key()); err != nil {

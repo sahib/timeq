@@ -1,6 +1,7 @@
 package timeq
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,6 +26,31 @@ func TestKeyTrunc(t *testing.T) {
 	// to the same value. One hour further should yield a different value.
 	require.Equal(t, trunc1, trunc2)
 	require.NotEqual(t, trunc1, trunc3)
+}
+
+func TestAPIPushPopEmpty(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	queue, err := Open(dir, DefaultOptions())
+	require.NoError(t, err)
+	require.NoError(t, queue.Close())
+
+	require.NoError(t, queue.Push(nil))
+	_, err = queue.Pop(100, nil)
+	require.NoError(t, err)
+}
+
+func TestAPIOptionsValidate(t *testing.T) {
+	opts := Options{}
+	require.Error(t, opts.Validate())
+
+	opts.BucketFunc = func(k Key) Key { return k }
+	require.NoError(t, opts.Validate())
+	require.NotNil(t, opts.Logger)
 }
 
 func TestAPIPushPopSeveralBuckets(t *testing.T) {
@@ -292,9 +318,7 @@ func TestAPIMove(t *testing.T) {
 	require.Equal(t, len(exp), srcQueue.Len())
 	require.Equal(t, 0, dstQueue.Len())
 
-	fmt.Println("---")
 	got, err := srcQueue.Move(len(exp), nil, dstQueue)
-	fmt.Println("===")
 	require.NoError(t, err)
 	require.Equal(t, exp, got)
 
@@ -310,4 +334,164 @@ func TestAPIMove(t *testing.T) {
 
 	require.NoError(t, srcQueue.Close())
 	require.NoError(t, dstQueue.Close())
+}
+
+type LogBuffer struct {
+	buf bytes.Buffer
+}
+
+func (lb *LogBuffer) Printf(fmtSpec string, args ...any) {
+	lb.buf.WriteString(fmt.Sprintf(fmtSpec, args...))
+	lb.buf.WriteByte('\n')
+}
+
+func (lb *LogBuffer) String() string {
+	return lb.buf.String()
+}
+
+func TestAPIErrorModePush(t *testing.T) {
+	t.Run("abort", func(t *testing.T) {
+		testAPIErrorModePush(t, bucket.ErrorModeAbort)
+	})
+	t.Run("continue", func(t *testing.T) {
+		testAPIErrorModePush(t, bucket.ErrorModeContinue)
+	})
+}
+
+func testAPIErrorModePush(t *testing.T, mode bucket.ErrorMode) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	logger := &LogBuffer{}
+	opts := Options{
+		Options: bucket.Options{
+			ErrorMode: mode,
+			Logger:    logger,
+		},
+		BucketFunc: func(key Key) Key {
+			return (key / 10) * 10
+		},
+	}
+
+	queue, err := Open(dir, opts)
+	require.NoError(t, err)
+
+	// make sure the whole directory cannot be accessed,
+	// forcing an error during Push.
+	require.NoError(t, os.Chmod(dir, 0100))
+
+	pushErr := queue.Push(testutils.GenItems(0, 100, 1))
+	if mode == bucket.ErrorModeContinue {
+		require.NotEmpty(t, logger.String())
+		require.NoError(t, pushErr)
+	} else {
+		require.Error(t, pushErr)
+	}
+
+	require.NoError(t, queue.Close())
+}
+
+func TestAPIErrorModePop(t *testing.T) {
+	t.Run("abort", func(t *testing.T) {
+		testAPIErrorModePop(t, bucket.ErrorModeAbort)
+	})
+	t.Run("continue", func(t *testing.T) {
+		testAPIErrorModePop(t, bucket.ErrorModeContinue)
+	})
+}
+
+func testAPIErrorModePop(t *testing.T, mode bucket.ErrorMode) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	// defer os.RemoveAll(dir)
+
+	logger := &LogBuffer{}
+	opts := Options{
+		Options: bucket.Options{
+			ErrorMode: mode,
+			Logger:    logger,
+		},
+		BucketFunc: func(key Key) Key {
+			return (key / 10) * 10
+		},
+	}
+
+	queue, err := Open(dir, opts)
+	require.NoError(t, err)
+
+	require.NoError(t, queue.Push(testutils.GenItems(0, 100, 1)))
+
+	// truncate the data log of a single bucket.
+	require.NoError(
+		t,
+		os.Truncate(filepath.Join(dir, Key(0).String(), bucket.DataLogName), 0),
+	)
+
+	items, popErr := queue.Pop(100, nil)
+	if mode == bucket.ErrorModeContinue {
+		require.NoError(t, popErr)
+		require.NotEmpty(t, logger.String())
+		require.NotEmpty(t, items)
+	} else {
+		require.Error(t, popErr)
+		require.Empty(t, items)
+	}
+
+	require.NoError(t, queue.Close())
+}
+
+func TestAPIErrorModeDelete(t *testing.T) {
+	t.Run("abort", func(t *testing.T) {
+		testAPIErrorModeDeleteLowerThan(t, bucket.ErrorModeAbort)
+	})
+	t.Run("continue", func(t *testing.T) {
+		testAPIErrorModeDeleteLowerThan(t, bucket.ErrorModeContinue)
+	})
+}
+
+func testAPIErrorModeDeleteLowerThan(t *testing.T, mode bucket.ErrorMode) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	logger := &LogBuffer{}
+	opts := Options{
+		Options: bucket.Options{
+			ErrorMode: mode,
+			Logger:    logger,
+		},
+		BucketFunc: func(key Key) Key {
+			return (key / 10) * 10
+		},
+	}
+
+	queue, err := Open(dir, opts)
+	require.NoError(t, err)
+
+	require.NoError(t, queue.Push(testutils.GenItems(0, 100, 1)))
+
+	// truncate the data log of a single bucket.
+	require.NoError(
+		t,
+		os.Truncate(filepath.Join(dir, Key(0).String(), bucket.DataLogName), 0),
+	)
+
+	ndeleted, err := queue.DeleteLowerThan(100)
+	if mode == bucket.ErrorModeContinue {
+		require.NotEmpty(t, logger.String())
+		require.NoError(t, err)
+		require.Equal(t, 90, ndeleted)
+	} else {
+		require.Error(t, err)
+		require.Equal(t, 0, ndeleted)
+	}
+
+	require.NoError(t, queue.Close())
 }

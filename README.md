@@ -116,7 +116,7 @@ There are also some other reasons:
 ### Can I store more than one value per key?
 
 Yes, no problem. The index may store more than one batch per key. There is a
-slight allocation overhead though on ``Queue.Push()`` though. Since ``timeq``
+slight allocation overhead on ``Queue.Push()`` though. Since ``timeq``
 was mostly optimized for mostly-unique keys (i.e. timestamps) you might see
 better performance with less duplicates.
 
@@ -140,7 +140,7 @@ Pop) but, in some cases, with duplicated data (Shovel). This assumes a filesyste
 with full journaling (``data=journal`` for ext4) or some other filesystem that gives
 your similar guarantees. At this point, this was not really tested in the wild yet.
 My recommendation is designing your application logic in a way that allows duplicate
-items to be handled from the queue.
+items to be handled gracefully.
 
 The test suite is currently roughly as big as the codebase. The best protection
 against bugs is a small code base though, so that's not too impressive yet.
