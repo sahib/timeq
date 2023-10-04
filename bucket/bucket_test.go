@@ -211,7 +211,7 @@ func TestBucketDeleteLowerThan(t *testing.T) {
 	})
 }
 
-func TestPushDuplicates(t *testing.T) {
+func TestBucketPushDuplicates(t *testing.T) {
 	withEmptyBucket(t, func(bucket *Bucket) {
 		const pushes = 100
 		expItems := testutils.GenItems(0, 10, 1)
@@ -238,7 +238,7 @@ func TestPushDuplicates(t *testing.T) {
 	})
 }
 
-func TestPeek(t *testing.T) {
+func TestBucketPeek(t *testing.T) {
 	withEmptyBucket(t, func(bucket *Bucket) {
 		const N = 100
 		exp := testutils.GenItems(0, N, 1)
