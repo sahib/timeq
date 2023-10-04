@@ -104,7 +104,7 @@ func (items Items) Copy() Items {
 }
 
 func (items Items) StorageSize() Off {
-	var sum Off = Off(len(items)) * (HeaderSize + TrailerSize)
+	sum := Off(len(items)) * (HeaderSize + TrailerSize)
 	for idx := 0; idx < len(items); idx++ {
 		sum += Off(len(items[idx].Blob))
 	}

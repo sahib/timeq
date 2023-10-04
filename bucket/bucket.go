@@ -385,7 +385,6 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
 
 	for _, key := range deleteEntries {
 		b.idx.Delete(key)
-		// TODO: Write test for that.
 		pushErr = errors.Join(pushErr, b.idxLog.Push(item.Location{
 			Key: key,
 			Len: 0,

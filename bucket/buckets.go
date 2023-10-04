@@ -290,7 +290,6 @@ func (bs *Buckets) Shovel(dstBs *Buckets) (int, error) {
 	var ntotalcopied int
 	err := bs.Iter(IncludeNil, func(key item.Key, srcBuck *Bucket) error {
 		if _, ok := dstBs.tree.Get(key); !ok {
-			// TODO: Write test with Pop after Shovel
 			// fast path: We can just move the bucket directory.
 			dstPath := dstBs.buckPath(key)
 			srcPath := bs.buckPath(key)

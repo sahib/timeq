@@ -164,6 +164,16 @@ func TestAPIShovelFastPath(t *testing.T) {
 }
 
 func TestAPIShovelSlowPath(t *testing.T) {
+	t.Run("reopen", func(t  *testing.T) {
+		testAPIShovelSlowPath(t, true)
+	})
+
+	t.Run("no-reopen", func(t  *testing.T) {
+		testAPIShovelSlowPath(t, false)
+	})
+}
+
+func testAPIShovelSlowPath(t *testing.T, reopen bool) {
 	t.Parallel()
 
 	dir, err := os.MkdirTemp("", "timeq-apitest")
@@ -195,6 +205,17 @@ func TestAPIShovelSlowPath(t *testing.T) {
 
 	require.Equal(t, 0, q1.Len())
 	require.Equal(t, len(q1Push)+len(q2Push), q2.Len())
+
+	if reopen {
+		require.NoError(t, q1.Close())
+		require.NoError(t, q2.Close())
+
+		q1, err = Open(q1Dir, DefaultOptions())
+		require.NoError(t, err)
+
+		q2, err = Open(q2Dir, DefaultOptions())
+		require.NoError(t, err)
+	}
 
 	exp := append(q1Push, q2Push...)
 	got, err := q2.Pop(len(q1Push)+len(q2Push), nil)
@@ -408,7 +429,7 @@ func testAPIErrorModePop(t *testing.T, mode bucket.ErrorMode) {
 
 	dir, err := os.MkdirTemp("", "timeq-apitest")
 	require.NoError(t, err)
-	// defer os.RemoveAll(dir)
+	defer os.RemoveAll(dir)
 
 	logger := &LogBuffer{}
 	opts := Options{
