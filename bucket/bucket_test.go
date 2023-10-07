@@ -14,7 +14,6 @@ import (
 func createEmptyBucket(t *testing.T) (*Bucket, string) {
 	dir, err := os.MkdirTemp("", "timeq-buckettest")
 	require.NoError(t, err)
-	defer os.RemoveAll(dir)
 
 	bucketDir := filepath.Join(dir, item.Key(23).String())
 	bucket, err := Open(bucketDir, DefaultOptions())
@@ -204,6 +203,11 @@ func TestBucketDeleteLowerThan(t *testing.T) {
 		require.Equal(t, 50, deleted)
 		require.False(t, bucket.Empty())
 
+		existing, npeeked, err := bucket.Peek(100, nil)
+		require.NoError(t, err)
+		require.Equal(t, 50, npeeked)
+		require.Equal(t, expItems[50:], existing)
+
 		deleted, err = bucket.DeleteLowerThan(100)
 		require.NoError(t, err)
 		require.Equal(t, 50, deleted)
@@ -211,7 +215,36 @@ func TestBucketDeleteLowerThan(t *testing.T) {
 	})
 }
 
-func TestPushDuplicates(t *testing.T) {
+func TestBucketDeleteLowerThanReopen(t *testing.T) {
+	bucket, dir := createEmptyBucket(t)
+	defer os.RemoveAll(dir)
+
+	require.Equal(t, 0, bucket.Len())
+	require.True(t, bucket.Empty())
+
+	expItems := testutils.GenItems(0, 100, 1)
+	require.NoError(t, bucket.Push(expItems))
+	require.Equal(t, 100, bucket.Len())
+
+	deleted, err := bucket.DeleteLowerThan(50)
+	require.NoError(t, err)
+	require.Equal(t, 50, deleted)
+	require.False(t, bucket.Empty())
+
+	// Re-open the bucket:
+	require.NoError(t, bucket.Close())
+	bucket, err = Open(bucket.dir, bucket.opts)
+	require.NoError(t, err)
+
+	// Pop should now see the previous 100:
+	items, npopped, err := bucket.Pop(100, nil)
+	require.Equal(t, 50, npopped)
+	require.Equal(t, expItems[50:], items)
+	require.NoError(t, err)
+	require.NoError(t, bucket.Close())
+}
+
+func TestBucketPushDuplicates(t *testing.T) {
 	withEmptyBucket(t, func(bucket *Bucket) {
 		const pushes = 100
 		expItems := testutils.GenItems(0, 10, 1)
@@ -238,7 +271,7 @@ func TestPushDuplicates(t *testing.T) {
 	})
 }
 
-func TestPeek(t *testing.T) {
+func TestBucketPeek(t *testing.T) {
 	withEmptyBucket(t, func(bucket *Bucket) {
 		const N = 100
 		exp := testutils.GenItems(0, N, 1)

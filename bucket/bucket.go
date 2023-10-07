@@ -342,6 +342,9 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
 		return 0, nil
 	}
 
+	lenBefore := b.idx.Len()
+
+	var pushErr error
 	var deleteEntries []item.Key
 	for iter := b.idx.Iter(); iter.Next(); {
 		loc := iter.Value()
@@ -367,12 +370,11 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
 		if partialFound {
 			// we found an enrty in the log that is >= key.
 			// resize the index entry to skip the entries before.
-			b.idx.Set(item.Location{
-				Key: partialItem.Key,
-				Off: partialLoc.Off,
-				Len: partialLoc.Len,
-			})
+			b.idx.Set(partialLoc)
 			ndeleted += int(loc.Len - partialLoc.Len)
+			pushErr = errors.Join(pushErr, b.idxLog.Push(partialLoc, index.Trailer{
+				TotalEntries: lenBefore - item.Off(ndeleted),
+			}))
 		} else {
 			// nothing found, this index entry can be dropped.
 			ndeleted += int(loc.Len)
@@ -383,9 +385,16 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
 
 	for _, key := range deleteEntries {
 		b.idx.Delete(key)
+		pushErr = errors.Join(pushErr, b.idxLog.Push(item.Location{
+			Key: key,
+			Len: 0,
+			Off: 0,
+		}, index.Trailer{
+			TotalEntries: lenBefore - item.Off(ndeleted),
+		}))
 	}
 
-	return ndeleted, b.idxLog.Sync(false)
+	return ndeleted, errors.Join(pushErr, b.idxLog.Sync(false))
 }
 
 func (b *Bucket) Empty() bool {

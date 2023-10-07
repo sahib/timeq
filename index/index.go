@@ -81,7 +81,7 @@ func Load(path string) (*Index, error) {
 	for rdr.Next(&loc) {
 		if loc.Len == 0 {
 			// len=0 means that the specific batch was fully consumed.
-			// delete any previosuly read values.
+			// delete any previously read values.
 			index.Delete(loc.Key)
 		} else {
 			index.Set(loc)
