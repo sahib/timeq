@@ -100,7 +100,7 @@ The data is stored on disk in two files per bucket:
 
 This graphic shows one entry of each:
 
-![Data Layout](docs/data_format.svg)
+![Data Layout](docs/data_format.png)
 
 Each bucket lives in its own directory called `K<key>`.
 Example: If you have two buckets, your data looks like this on this:
