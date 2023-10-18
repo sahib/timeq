@@ -148,16 +148,12 @@ func (b *Bucket) Push(items item.Items) (outErr error) {
 }
 
 func (b *Bucket) logAt(loc item.Location) vlog.Iter {
-	continueOnErr := true
-	if b.opts.ErrorMode == ErrorModeAbort {
-		continueOnErr = false
-	}
-
+	continueOnErr := b.opts.ErrorMode != ErrorModeAbort
 	return b.log.At(loc, continueOnErr)
 }
 
-// addPopIter adds a new batchIter to `batchIters` and advances the idxIter.
-func (b *Bucket) addPopIter(batchIters *vlog.Iters, idxIter *index.Iter) (bool, error) {
+// addIter adds a new batchIter to `batchIters` and advances the idxIter.
+func (b *Bucket) addIter(batchIters *vlog.Iters, idxIter *index.Iter) (bool, error) {
 	loc := idxIter.Value()
 	batchIter := b.logAt(loc)
 	if !batchIter.Next(nil) {
@@ -169,9 +165,18 @@ func (b *Bucket) addPopIter(batchIters *vlog.Iters, idxIter *index.Iter) (bool, 
 	return !idxIter.Next(), nil
 }
 
+// maybeCopy copies the items if user asked for it in the config.
+func (b *Bucket) maybeCopy(items item.Items) item.Items {
+	if b.opts.Copy {
+		return items.Copy()
+	}
+
+	return items
+}
+
 func (b *Bucket) Pop(n int, dst item.Items) (item.Items, int, error) {
 	if n <= 0 {
-		// technically that's a valid usecase.
+		// technically that's a valid use case.
 		return dst, 0, nil
 	}
 
@@ -180,16 +185,16 @@ func (b *Bucket) Pop(n int, dst item.Items) (item.Items, int, error) {
 
 	iters, items, npopped, err := b.peek(n, dst)
 	if err != nil {
-		return items, npopped, err
+		return b.maybeCopy(items), npopped, err
 	}
 
 	if iters != nil {
 		if err := b.popSync(iters); err != nil {
-			return items, npopped, err
+			return b.maybeCopy(items), npopped, err
 		}
 	}
 
-	return items, npopped, nil
+	return b.maybeCopy(items), npopped, nil
 }
 
 func (b *Bucket) Peek(n int, dst item.Items) (item.Items, int, error) {
@@ -201,7 +206,7 @@ func (b *Bucket) Peek(n int, dst item.Items) (item.Items, int, error) {
 	defer b.mu.Unlock()
 
 	_, items, npopped, err := b.peek(n, dst)
-	return items, npopped, err
+	return b.maybeCopy(items), npopped, err
 }
 
 // Move moves data between two buckets in a safer way. In case of
@@ -219,14 +224,16 @@ func (b *Bucket) Move(n int, dst item.Items, dstBuck *Bucket) (item.Items, int, 
 
 	iters, items, npopped, err := b.peek(n, dst)
 	if err != nil {
-		return items, npopped, err
+		return b.maybeCopy(items), npopped, err
 	}
 
-	if err := dstBuck.Push(items[len(dst):]); err != nil {
-		return items, npopped, err
+	if dstBuck != nil {
+		if err := dstBuck.Push(items[len(dst):]); err != nil {
+			return b.maybeCopy(items), npopped, err
+		}
 	}
 
-	return items, npopped, b.popSync(iters)
+	return b.maybeCopy(items), npopped, b.popSync(iters)
 }
 
 // peek reads from the bucket, but does not mark the elements as deleted yet.
@@ -243,7 +250,7 @@ func (b *Bucket) peek(n int, dst item.Items) (batchIters *vlog.Iters, outItems i
 	// initialize with first batch iter:
 	batchItersSlice := make(vlog.Iters, 0, 1)
 	batchIters = &batchItersSlice
-	indexExhausted, err := b.addPopIter(batchIters, &idxIter)
+	indexExhausted, err := b.addIter(batchIters, &idxIter)
 	if err != nil {
 		return nil, dst, 0, err
 	}
@@ -278,7 +285,7 @@ func (b *Bucket) peek(n int, dst item.Items) (batchIters *vlog.Iters, outItems i
 		if !indexExhausted {
 			nextLoc := idxIter.Value()
 			if (*batchIters)[0].Exhausted() || nextLoc.Key <= nextItem.Key {
-				indexExhausted, err = b.addPopIter(batchIters, &idxIter)
+				indexExhausted, err = b.addIter(batchIters, &idxIter)
 				if err != nil {
 					return nil, dst, 0, err
 				}

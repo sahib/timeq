@@ -165,3 +165,4 @@ Chris Pahl [@sahib](https://github.com/sahib)
 - [x] Figure out error handling. If a bucket is unreadable, fail or continue?
 - [ ] Improve test coverage / extend test suite
 - [ ] Profile and optimize a bit more, if possible.
+- [ ] Improve docs on why exactly timeq is fast.
