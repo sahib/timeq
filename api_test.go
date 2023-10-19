@@ -164,11 +164,11 @@ func TestAPIShovelFastPath(t *testing.T) {
 }
 
 func TestAPIShovelSlowPath(t *testing.T) {
-	t.Run("reopen", func(t  *testing.T) {
+	t.Run("reopen", func(t *testing.T) {
 		testAPIShovelSlowPath(t, true)
 	})
 
-	t.Run("no-reopen", func(t  *testing.T) {
+	t.Run("no-reopen", func(t *testing.T) {
 		testAPIShovelSlowPath(t, false)
 	})
 }
@@ -515,4 +515,18 @@ func testAPIErrorModeDeleteLowerThan(t *testing.T, mode bucket.ErrorMode) {
 	}
 
 	require.NoError(t, queue.Close())
+}
+
+func TestAPIBadOptions(t *testing.T) {
+	t.Parallel()
+
+	// Still create test dir to make sure it does not error out because of that:
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	opts := DefaultOptions()
+	opts.BucketFunc = nil
+	_, err = Open(dir, opts)
+	require.Error(t, err)
 }

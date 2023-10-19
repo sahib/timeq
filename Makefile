@@ -8,6 +8,9 @@ lint:
 test:
 	gotestsum -- -coverprofile=cover.out ./...
 
+cover: test
+	go tool cover -html cover.out
+
 sloc:
 	@cloc --json $$(find -iname '*.go' ! -iname '*_test.go') | jq '.Go.code' | xargs -n1 printf "Actual code:\t%d Lines\n"
 	@cloc --json $$(find -iname '*_test.go') | jq '.Go.code' | xargs -n1 printf "Test cases:\t%d Lines\n"
