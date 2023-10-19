@@ -6,13 +6,13 @@
 A persistent priority queue in Go.
 
 > [!WARNING]
-> This is still in active development. Not every goal described below was reached yet.
+> This is still in active development. Before version 1.0 the API and the format on disk might change.
 
 ## Features
 
 - Clean and well test code base based on Go 1.21.
-- High throughput.
-- Tiny memory footprint.
+- High throughput thanks to batch processing.
+- Tiny memory footprint that does not depend on the number of items in the queue.
 - Simple interface with classic `Push()` and `Pop()` and only few other functions.
 - Configurable durability behavior.
 
@@ -21,14 +21,14 @@ However, the initial design had timestamps as priority keys in mind. For best
 performance the following assumptions were made:
 
 - Your OS supports `mmap()` and `mremap()` (i.e. Linux/FreeBSD)
-- Seeking in files is cheap (i.e. no HDD)
+- Seeking in files during reading is cheap (i.e. no HDD)
 - The priority key ideally increases without much duplicates (like timestamps, see [FAQ](#FAQ)).
 - You push and pop your data in, ideally, big batches.
 - File storage is not a primary concern (i.e. no compression implemented).
 - The underlying storage has a low risk for write errors or bit flips.
 - You trust your data to some random dude's code on the internet (don't we all?).
 
-If some of those assumptions do not fit your usecase and you still managed to make it work,
+If some of those assumptions do not fit your use case and you still managed to make it work,
 I would be happy for some feedback or even pull requests to improve the general usability.
 
 ## Usecase
@@ -78,7 +78,7 @@ BenchmarkPushSyncFull-16     	  19994	    59491 ns/op	     72 B/op	      2 alloc
 
 ## Design
 
-* All data is divided into buckets by a user-defined function.
+* All data is divided into buckets by a user-defined function (»`BucketFunc`«).
 * Each bucket is it's own priority queue, responsible for a part of the key space.
 * A push to a bucket writes the batch of data to a memory-mapped log
   file on disk. The location of the batch is stored in an
@@ -91,11 +91,57 @@ BenchmarkPushSyncFull-16     	  19994	    59491 ns/op	     72 B/op	      2 alloc
 Since the index is quite small (only one entry per batch) we can easily fit it in memory.
 On the initial load all bucket indexes are loaded, but no memory is mapped yet.
 
+### Data Layout
+
+The data is stored on disk in two files per bucket:
+
+* ``data.log``: Stores a single entry of a batch.
+* ``idx.log``: Stores the key and location of batches. Can be regenerated from ``dat.log``.
+
+This graphic shows one entry of each:
+
+![Data Layout](docs/data_format.png)
+
+Each bucket lives in its own directory called `K<key>`.
+Example: If you have two buckets, your data looks like this on this:
+
+```
+/path/to/db/
+├── K00000000000000000001
+│   ├── dat.log
+│   └── idx.log
+└── K00000000000000000002
+    ├── dat.log
+    └── idx.log
+```
+
+
+NOTE: Buckets get only cleaned up on re-open. Both ``idx.log`` and ``dat.log``
+are append-only, so old entries simply get marked as deleted. Since the content
+is memory mapped, it's a safety mechanism not to clean up keys directly after
+`Push` or `Pop`since this might kill the mapped memory.
+
+### Applied Optimizations
+
+* Data is pushed and popped as big batches and the index only stores batches,
+  greatly lowering the usage of memory.
+* The API is very friendly towards re-using memory with the `dst` parameter.
+* Almost no allocations made during normal operation.
+* Data is sliced directly out of the `mmap`, avoiding unnecessary allocation and copying.
+  (This comes with the price of letting the caller decide if he needs to copy though).
+* Division into small, manageable buckets. Only the buckets that are accessed are actually loaded.
+  This allows the use of 32-bit offsets in buckets to save a bit space.
+* Both `dat.log` and `idx.log` are append-only, requiring no random seeking.
+* ``dat.log`` is memory mapped and resized using `mremap()` in big batches.
+  The bigger the log, the bigger the pre-allocation.
+* Sorting into buckets during `Push()` uses binary search for fast sorting.
+* `Shovel()` can move whole bucket directories, if possible.
+
 ## FAQ:
 
 ### Can timeq be also used with non-time based keys?
 
-There are no notable place where the key of an item is actually assumed to be
+There are no notable places where the key of an item is actually assumed to be
 timestamp, except for the default bucket func (which can be configured). If you
 find a good way to sort your data into buckets you should be good to go. Keep
 in mind that timestamps were the idea behind the original design, so your
@@ -135,7 +181,7 @@ There's no error correction code applied in the data log and no checksums are
 currently written. If you need this, I'm happy if a PR comes in that enables it
 as option.
 
-For durability, the design is build to survice crashes without data loss (Push,
+For durability, the design is build to survive crashes without data loss (Push,
 Pop) but, in some cases, with duplicated data (Shovel). This assumes a filesystem
 with full journaling (``data=journal`` for ext4) or some other filesystem that gives
 your similar guarantees. At this point, this was not really tested in the wild yet.
@@ -149,6 +195,18 @@ actual coverage is higher than what is shown in `make test` since most
 higher-level tests also test lower-level functionality. Additionally we have a
 bunch of benchmarks and fuzzing tests.
 
+### Is `timeq` safely usable from several go-routines?
+
+In general, yes. Be aware however that `timeq` by default directly returns the
+contents of the data log mapped by `mmap()`. This means that memory might get
+invalid after the next call to `Push()`, `Pop()` or other functions. Special
+care must be taken therefore to not call any other method until the memory was
+processed (copied, compressed, whatever) by your application.
+
+If you get a panic while accessing your memory, this is most likely the reason.
+You can use the `Copy` option to let `timeq` copy the data for you, if you can
+tolerate the performance penalty introduced by those allocations.
+
 ## License
 
 Source code is available under the MIT [License](/LICENSE).
@@ -159,9 +217,13 @@ Chris Pahl [@sahib](https://github.com/sahib)
 
 ## TODO List
 
+Those need to be resolved before tagging a version 1.0.
+
 - [x] Add fuzzing test for Push/Pop
 - [x] Use a configurable logger for warnings
 - [x] We crash currently when running out of space.
 - [x] Figure out error handling. If a bucket is unreadable, fail or continue?
-- [ ] Improve test coverage / extend test suite
+- [x] Improve docs on why exactly timeq is fast.
+- [x] Document thread safety rules
+- [ ] Improve test coverage / extend test suite / test for race conditions
 - [ ] Profile and optimize a bit more, if possible.

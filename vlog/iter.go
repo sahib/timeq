@@ -4,7 +4,7 @@ import (
 	"github.com/sahib/timeq/item"
 )
 
-type LogIter struct {
+type Iter struct {
 	firstKey         item.Key
 	currOff, currLen item.Off
 	prevOff, prevLen item.Off
@@ -15,7 +15,7 @@ type LogIter struct {
 	continueOnErr    bool
 }
 
-func (li *LogIter) Next(itDst *item.Item) bool {
+func (li *Iter) Next(itDst *item.Item) bool {
 	if li.currLen == 0 || li.exhausted {
 		li.exhausted = true
 		return false
@@ -68,25 +68,25 @@ func (li *LogIter) Next(itDst *item.Item) bool {
 	return true
 }
 
-func (li *LogIter) Exhausted() bool {
+func (li *Iter) Exhausted() bool {
 	return li.exhausted
 }
 
 // Key returns the key this iterator was created with
 // This is not the current key of the item!
-func (li *LogIter) FirstKey() item.Key {
+func (li *Iter) FirstKey() item.Key {
 	return li.firstKey
 }
 
 // Item returns the current item.
 // It is not valid before Next() has been called.
-func (li *LogIter) Item() item.Item {
+func (li *Iter) Item() item.Item {
 	return li.item
 }
 
 // CurrentLocation returns the location of the current entry.
 // It is not valid before Next() has been called.
-func (li *LogIter) CurrentLocation() item.Location {
+func (li *Iter) CurrentLocation() item.Location {
 	return item.Location{
 		Key: li.item.Key,
 		Off: li.prevOff,
@@ -94,18 +94,18 @@ func (li *LogIter) CurrentLocation() item.Location {
 	}
 }
 
-func (li *LogIter) Err() error {
+func (li *Iter) Err() error {
 	return li.err
 }
 
 ////////////////
 
-type LogIters []LogIter
+type Iters []Iter
 
 // Make LogIter usable by heap.Interface
-func (ls LogIters) Len() int      { return len(ls) }
-func (ls LogIters) Swap(i, j int) { ls[i], ls[j] = ls[j], ls[i] }
-func (ls LogIters) Less(i, j int) bool {
+func (ls Iters) Len() int      { return len(ls) }
+func (ls Iters) Swap(i, j int) { ls[i], ls[j] = ls[j], ls[i] }
+func (ls Iters) Less(i, j int) bool {
 	ii, ij := ls[i], ls[j]
 	if ii.exhausted != ij.exhausted {
 		// sort exhausted iters to the back
@@ -116,11 +116,11 @@ func (ls LogIters) Less(i, j int) bool {
 	return ki < kj
 }
 
-func (ls *LogIters) Push(x any) {
-	*ls = append(*ls, x.(LogIter))
+func (ls *Iters) Push(x any) {
+	*ls = append(*ls, x.(Iter))
 }
 
-func (ls *LogIters) Pop() any {
+func (ls *Iters) Pop() any {
 	// NOTE: This is currently unused.
 	old := *ls
 	n := len(old)

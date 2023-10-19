@@ -320,3 +320,48 @@ func TestBucketMove(t *testing.T) {
 	require.NoError(t, srcBuck.Close())
 	require.NoError(t, dstBuck.Close())
 }
+
+func TestBucketCopyOpt(t *testing.T) {
+	t.Parallel()
+
+	t.Run("pop", func(t *testing.T) {
+		testBucketCopyOpt(t, func(b *Bucket, n int) (item.Items, error) {
+			items, _, err := b.Pop(n, nil)
+			return items, err
+		})
+	})
+
+	t.Run("peek", func(t *testing.T) {
+		testBucketCopyOpt(t, func(b *Bucket, n int) (item.Items, error) {
+			items, _, err := b.Peek(n, nil)
+			return items, err
+		})
+	})
+
+	t.Run("move", func(t *testing.T) {
+		testBucketCopyOpt(t, func(b *Bucket, n int) (item.Items, error) {
+			items, _, err := b.Move(n, nil, nil)
+			return items, err
+		})
+	})
+}
+
+func testBucketCopyOpt(t *testing.T, popFn func(b *Bucket, n int) (item.Items, error)) {
+	buck, dir := createEmptyBucket(t)
+	defer os.RemoveAll(dir)
+	buck.opts.Copy = true
+
+	const N = 100
+	exp := testutils.GenItems(0, N, 1)
+
+	require.NoError(t, buck.Push(exp))
+	got, err := popFn(buck, N)
+	require.NoError(t, err)
+
+	// Close the bucket and therefore also the value log.
+	buck.Close()
+
+	// Without copying, this will yield a panic, as the
+	// memory map has been closed already.
+	require.Equal(t, exp, got)
+}

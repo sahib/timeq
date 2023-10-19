@@ -143,27 +143,27 @@ func testIterBrokenStream(t *testing.T, overwriteIndex int, continueOnErr bool) 
 }
 
 func TestIterHeap(t *testing.T) {
-	iters := LogIters{}
+	iters := Iters{}
 	itersHeap := &iters
 	heap.Init(itersHeap)
 	require.Equal(t, 0, itersHeap.Len())
 
-	heap.Push(itersHeap, LogIter{
+	heap.Push(itersHeap, Iter{
 		exhausted: true,
 		item:      item.Item{Key: 100},
 	})
-	heap.Push(itersHeap, LogIter{
+	heap.Push(itersHeap, Iter{
 		exhausted: false,
 		item:      item.Item{Key: 50},
 	})
-	heap.Push(itersHeap, LogIter{
+	heap.Push(itersHeap, Iter{
 		exhausted: false,
 		item:      item.Item{Key: 0},
 	})
 
-	it1 := heap.Pop(itersHeap).(LogIter)
-	it2 := heap.Pop(itersHeap).(LogIter)
-	it3 := heap.Pop(itersHeap).(LogIter)
+	it1 := heap.Pop(itersHeap).(Iter)
+	it2 := heap.Pop(itersHeap).(Iter)
+	it3 := heap.Pop(itersHeap).(Iter)
 
 	require.False(t, it1.Exhausted())
 	require.False(t, it2.Exhausted())

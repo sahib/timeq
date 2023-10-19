@@ -1,9 +1,9 @@
 package timeq
 
 import (
+	"errors"
 	"fmt"
 	"slices"
-	"errors"
 
 	"github.com/sahib/timeq/bucket"
 	"github.com/sahib/timeq/item"
@@ -39,7 +39,7 @@ type Options struct {
 	// The provided function should clamp the key value to
 	// a common value. Each same value that was returned goes
 	// into the same bucket. The returned value should be also
-	// the minimm key of the bucket.
+	// the minimum key of the bucket.
 	//
 	// Example: '(key / 10) * 10' would produce buckets with 10 items.
 	//
@@ -62,7 +62,7 @@ func (o *Options) Validate() error {
 	if o.Logger == nil {
 		// this allows us to leave out quite some null checks when
 		// using the logger option, even when it's not set.
-		o.Logger =	bucket.NullLogger()
+		o.Logger = bucket.NullLogger()
 	}
 
 	if o.BucketFunc == nil {
@@ -292,8 +292,6 @@ func (q *Queue) DeleteLowerThan(key Key) (int, error) {
 	if err != nil {
 		return numDeleted, err
 	}
-
-
 	for _, bucket := range deletableBucks {
 		if err := q.buckets.Delete(bucket.Key()); err != nil {
 			return numDeleted, fmt.Errorf("bucket delete: %w", err)
