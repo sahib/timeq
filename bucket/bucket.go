@@ -47,7 +47,10 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 	//   and prints a stack trace. Changing this to a recoverable panic allows us to intervene
 	//   and continue execution with a proper error return.
 	//
-	// Other errors like suddenl deleted database files might cause this too.
+	// Other errors like suddenly deleted database files might cause this too.
+	// The drawback of this approach is that this might cause issues if the calling processes
+	// also sets this option (but with False!). If this turns out to be a problem we have to
+	// introduce an option to disable this error handling.
 	debug.SetPanicOnFault(true)
 
 	defer recoverMmapError(&outErr)
@@ -59,8 +62,10 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 
 	idxPath := filepath.Join(dir, "idx.log")
 	idx, err := index.Load(idxPath)
-	if err != nil {
-		// We try to re-generate the index from the value log.
+	if err != nil || (idx.Len() == 0 && !log.IsEmpty()) {
+		// We try to re-generate the index from the value log if
+		// the index is damaged or missing (in case the value log has some entries).
+		//
 		// Since we have all the keys and offsets there too,
 		// we should be able to recover from that.
 		opts.Logger.Printf("failed to load index %s: %v", idxPath, err)

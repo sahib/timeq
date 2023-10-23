@@ -16,6 +16,7 @@ type Log struct {
 	mmap        []byte
 	size        int64
 	syncOnWrite bool
+	isEmpty     bool
 }
 
 var PageSize int64 = 4096
@@ -89,6 +90,8 @@ func (l *Log) init() error {
 		if err := fd.Truncate(mmapSize); err != nil {
 			return fmt.Errorf("truncate: %w", err)
 		}
+
+		l.isEmpty = true
 	}
 
 	mmap, err := unix.Mmap(
@@ -192,6 +195,10 @@ func (l *Log) Push(items item.Items) (loc item.Location, err error) {
 		return
 	}
 
+	if l.isEmpty && len(items) > 0 {
+		l.isEmpty = false
+	}
+
 	return loc, nil
 }
 
@@ -280,4 +287,8 @@ func (l *Log) Close() error {
 	unmapErr := unix.Munmap(l.mmap)
 	closeErr := l.fd.Close()
 	return errors.Join(syncErr, unmapErr, closeErr)
+}
+
+func (l *Log) IsEmpty() bool {
+	return l.isEmpty
 }

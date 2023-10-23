@@ -27,12 +27,12 @@ type Logger interface {
 	Printf(fmt string, args ...any)
 }
 
-type fileLogger struct {
+type writerLogger struct {
 	w io.Writer
 }
 
-func (fl *fileLogger) Printf(fmtStr string, args ...any) {
-	fmt.Fprintf(fl.w, "[timeq] "+fmtStr, args...)
+func (fl *writerLogger) Printf(fmtStr string, args ...any) {
+	fmt.Fprintf(fl.w, "[timeq] "+fmtStr+"\n", args...)
 }
 
 type ErrorMode int
@@ -51,12 +51,12 @@ const (
 
 // DefaultLogger produces a logger that writes to stderr.
 func DefaultLogger() Logger {
-	return &fileLogger{w: os.Stderr}
+	return &writerLogger{w: os.Stderr}
 }
 
 // NullLogger produces a logger that discards all messages.
 func NullLogger() Logger {
-	return &fileLogger{w: io.Discard}
+	return &writerLogger{w: io.Discard}
 }
 
 // Options are fine-tuning knobs specific to individual buckets

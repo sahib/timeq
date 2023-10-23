@@ -184,3 +184,24 @@ func TestLogFindNextItem(t *testing.T) {
 	require.Equal(t, item.Off(l.size), nextNextItemOff)
 	require.Equal(t, nextNextItemOff, l.findNextItem(nextNextItemOff))
 }
+
+func TestLogEmpty(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "timeq-vlogtest")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	logPath := filepath.Join(tmpDir, "log")
+	log, err := Open(logPath, true)
+	require.NoError(t, err)
+
+	require.True(t, log.IsEmpty())
+	_, err = log.Push(testutils.GenItems(0, 10, 1))
+	require.NoError(t, err)
+	require.False(t, log.IsEmpty())
+	require.NoError(t, log.Close())
+
+	log, err = Open(logPath, true)
+	require.NoError(t, err)
+	require.False(t, log.IsEmpty())
+	require.NoError(t, log.Close())
+}

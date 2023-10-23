@@ -53,3 +53,21 @@ func TestItemsCopy(t *testing.T) {
 	require.Equal(t, items, copied)
 	require.True(t, unsafe.SliceData(items) != unsafe.SliceData(copied))
 }
+
+func TestItemStorageSize(t *testing.T) {
+	var items Items
+	require.Zero(t, items.StorageSize())
+
+	items = Items{
+		Item{
+			Key:  23,
+			Blob: make([]byte, 10),
+		},
+		Item{
+			Key:  42,
+			Blob: make([]byte, 10),
+		},
+	}
+
+	require.Equal(t, Off(48), items.StorageSize())
+}

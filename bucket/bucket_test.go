@@ -1,6 +1,7 @@
 package bucket
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"slices"
@@ -364,4 +365,41 @@ func testBucketCopyOpt(t *testing.T, popFn func(b *Bucket, n int) (item.Items, e
 	// Without copying, this will yield a panic, as the
 	// memory map has been closed already.
 	require.Equal(t, exp, got)
+}
+
+func TestBucketRegenWith(t *testing.T) {
+	buck, dir := createEmptyBucket(t)
+	defer os.RemoveAll(dir)
+
+	const N = 100
+	exp1 := testutils.GenItems(0, N, 2)
+	exp2 := testutils.GenItems(1, N, 2)
+	exp := append(exp1, exp2...)
+	slices.SortFunc(exp, func(i, j item.Item) int {
+		return int(i.Key - j.Key)
+	})
+
+	require.NoError(t, buck.Push(exp1))
+	require.NoError(t, buck.Push(exp2))
+	require.NoError(t, buck.Close())
+
+	bucketDir := filepath.Join(dir, buck.Key().String())
+	require.NoError(t, os.Remove(filepath.Join(bucketDir, "idx.log")))
+
+	// Re-opening the bucket should regenerate the index
+	// from the value log contents:
+	var err error
+	var logBuffer bytes.Buffer
+	opts := DefaultOptions()
+	opts.Logger = &writerLogger{
+		w: &logBuffer,
+	}
+	buck, err = Open(bucketDir, opts)
+	require.NoError(t, err)
+
+	got, npopped, err := buck.Pop(N, nil)
+	require.NoError(t, err)
+	require.Equal(t, N, npopped)
+	require.Equal(t, exp, got)
+	require.NotEmpty(t, logBuffer.String())
 }
