@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/sahib/timeq/index"
 	"github.com/sahib/timeq/item"
 	"github.com/sahib/timeq/item/testutils"
 	"github.com/stretchr/testify/require"
@@ -368,6 +369,40 @@ func testBucketCopyOpt(t *testing.T, popFn func(b *Bucket, n int) (item.Items, e
 }
 
 func TestBucketRegenWith(t *testing.T) {
+	tcs := []struct {
+		Name      string
+		DamageFn  func(path string) error
+		IsDamaged bool
+	}{{
+		Name:      "removed_index",
+		DamageFn:  os.Remove,
+		IsDamaged: true,
+	}, {
+		Name:      "empty_index",
+		DamageFn:  func(path string) error { return os.Truncate(path, 0) },
+		IsDamaged: true,
+	}, {
+		Name:      "bad_permissions",
+		DamageFn:  func(path string) error { return os.Chmod(path, 0300) },
+		IsDamaged: true,
+	}, {
+		Name:      "broken_index",
+		DamageFn:  func(path string) error { return os.Truncate(path, index.LocationSize-1) },
+		IsDamaged: true,
+	}, {
+		Name:      "not_damaged",
+		DamageFn:  func(path string) error { return nil },
+		IsDamaged: false,
+	}}
+
+	for _, tc := range tcs {
+		t.Run(tc.Name, func(t *testing.T) {
+			testBucketRegenWith(t, tc.IsDamaged, tc.DamageFn)
+		})
+	}
+}
+
+func testBucketRegenWith(t *testing.T, isDamaged bool, damageFn func(path string) error) {
 	buck, dir := createEmptyBucket(t)
 	defer os.RemoveAll(dir)
 
@@ -384,7 +419,7 @@ func TestBucketRegenWith(t *testing.T) {
 	require.NoError(t, buck.Close())
 
 	bucketDir := filepath.Join(dir, buck.Key().String())
-	require.NoError(t, os.Remove(filepath.Join(bucketDir, "idx.log")))
+	require.NoError(t, damageFn(filepath.Join(bucketDir, "idx.log")))
 
 	// Re-opening the bucket should regenerate the index
 	// from the value log contents:
@@ -401,5 +436,11 @@ func TestBucketRegenWith(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, N, npopped)
 	require.Equal(t, exp, got)
-	require.NotEmpty(t, logBuffer.String())
+
+	if isDamaged {
+		require.NotEmpty(t, logBuffer.String())
+	} else {
+		require.Empty(t, logBuffer.String())
+
+	}
 }

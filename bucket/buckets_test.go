@@ -153,3 +153,43 @@ func TestBucketsValidateFunc(t *testing.T) {
 
 	require.NoError(t, bs.Close())
 }
+
+func TestBucketsDelete(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "timeq-bucketstest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	bs, err := LoadAll(dir, DefaultOptions())
+	require.NoError(t, err)
+
+	// Delete non-existing yet.
+	require.Error(t, bs.Delete(50))
+
+	// Create bucket and delete again:
+	_, err = bs.ForKey(50)
+	require.NoError(t, err)
+	require.NoError(t, bs.Delete(50))
+	require.Error(t, bs.Delete(50))
+}
+
+func TestBucketsNotEmptyDir(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "timeq-bucketstest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	writeDummyBucket(t, dir, 33, testutils.GenItems(0, 10, 1))
+
+	subDir := filepath.Join(dir, "sub")
+	require.NoError(t, os.MkdirAll(subDir, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(subDir, "file"), []byte("Hello World!"), 0700))
+
+	// Loading such a dir should error out as it seems that we try to open a directory with other things
+	// in it that are not buckets at all. The caller can prepare this by having a os.Remove() of the contents,
+	// but we should not do this automatically.
+	_, err = LoadAll(dir, DefaultOptions())
+	require.Error(t, err)
+}

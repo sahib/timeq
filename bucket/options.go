@@ -49,6 +49,10 @@ const (
 	ErrorModeContinue
 )
 
+func WriterLogger(w io.Writer) Logger {
+	return &writerLogger{w: w}
+}
+
 // DefaultLogger produces a logger that writes to stderr.
 func DefaultLogger() Logger {
 	return &writerLogger{w: os.Stderr}

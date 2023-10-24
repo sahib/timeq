@@ -58,7 +58,7 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 				return nil, err
 			}
 
-			opts.Logger.Printf("failed to read trailer: %v", err)
+			opts.Logger.Printf("failed to read trailer on bucket %s: %v", buckPath, err)
 			continue
 		}
 
