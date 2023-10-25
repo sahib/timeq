@@ -530,3 +530,26 @@ func TestAPIBadOptions(t *testing.T) {
 	_, err = Open(dir, opts)
 	require.Error(t, err)
 }
+
+func TestAPIPushError(t *testing.T) {
+	// Still create test dir to make sure it does not error out because of that:
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	buf := &bytes.Buffer{}
+	opts := DefaultOptions()
+	opts.Logger = bucket.WriterLogger(buf)
+	queue, err := Open(dir, opts)
+	require.NoError(t, err)
+
+	// First push creates the bucket.
+	require.NoError(t, queue.Push(testutils.GenItems(0, 10, 1)))
+
+	// Truncating the log should trigger an error on the second push (actually a panic)
+	dataPath := filepath.Join(dir, item.Key(0).String(), bucket.DataLogName)
+	require.NoError(t, os.Truncate(dataPath, 0))
+	require.Error(t, queue.Push(testutils.GenItems(0, 10, 1)))
+
+	require.NoError(t, queue.Close())
+}

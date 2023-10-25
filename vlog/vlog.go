@@ -64,31 +64,23 @@ func Open(path string, syncOnWrite bool) (*Log, error) {
 		syncOnWrite: syncOnWrite,
 	}
 
-	return l, l.init()
-}
-
-func (l *Log) init() error {
-	if len(l.mmap) > 0 {
-		return nil
-	}
-
 	flags := os.O_APPEND | os.O_CREATE | os.O_RDWR
-	fd, err := os.OpenFile(l.path, flags, 0600)
+	fd, err := os.OpenFile(path, flags, 0600)
 	if err != nil {
-		return fmt.Errorf("log: open: %w", err)
+		return nil, fmt.Errorf("log: open: %w", err)
 	}
 
 	info, err := fd.Stat()
 	if err != nil {
 		fd.Close()
-		return fmt.Errorf("log: stat: %w", err)
+		return nil, fmt.Errorf("log: stat: %w", err)
 	}
 
 	mmapSize := info.Size()
 	if mmapSize == 0 {
 		mmapSize = nextSize(0)
 		if err := fd.Truncate(mmapSize); err != nil {
-			return fmt.Errorf("truncate: %w", err)
+			return nil, fmt.Errorf("truncate: %w", err)
 		}
 
 		l.isEmpty = true
@@ -104,7 +96,7 @@ func (l *Log) init() error {
 
 	if err != nil {
 		fd.Close()
-		return fmt.Errorf("log: mmap: %w", err)
+		return nil, fmt.Errorf("log: mmap: %w", err)
 	}
 
 	// give OS a hint that we will likely need that memory soon:
@@ -120,7 +112,7 @@ func (l *Log) init() error {
 	// we would waste some space since new pushes are written beyond
 	// the truncated area. Just shrink to the last written data.
 	l.size = l.shrink()
-	return nil
+	return l, nil
 }
 
 func (l *Log) shrink() int64 {

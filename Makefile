@@ -9,7 +9,7 @@ test:
 	@# This incudes integration testing in the output.
 	@# (e.g.: Shovel() has no tests in bucket/ but has one in ./
 	@#  without this, Shovel() would be counted as 0% covered)
-	@gotestsum -- -race -coverprofile=cover.out ./... -coverpkg $$(go list -f $$'{{range $$f := .Imports}}{{$$f}}\n{{end}}' ./... | grep timeq | sort | uniq | paste -sd ',')
+	@gotestsum -- -race -coverprofile=cover.out ./... -covermode=atomic -coverpkg $$(go list -f $$'{{range $$f := .Imports}}{{$$f}}\n{{end}}' ./... | grep timeq | sort | uniq | paste -sd ',')
 
 cover: test
 	go tool cover -html cover.out
