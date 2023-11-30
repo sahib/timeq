@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"sync"
+	"time"
 
 	"github.com/sahib/timeq/index"
 	"github.com/sahib/timeq/item"
@@ -19,13 +20,14 @@ const (
 )
 
 type Bucket struct {
-	mu     sync.Mutex
-	dir    string
-	key    item.Key
-	log    *vlog.Log
-	idxLog *index.Writer
-	idx    *index.Index
-	opts   Options
+	mu         sync.Mutex
+	dir        string
+	key        item.Key
+	log        *vlog.Log
+	idxLog     *index.Writer
+	idx        *index.Index
+	opts       Options
+	lastAccess time.Time
 }
 
 func Open(dir string, opts Options) (buck *Bucket, outErr error) {
@@ -93,12 +95,13 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 	}
 
 	return &Bucket{
-		dir:    dir,
-		key:    item.Key(key),
-		log:    log,
-		idx:    idx,
-		idxLog: idxLog,
-		opts:   opts,
+		dir:        dir,
+		key:        item.Key(key),
+		log:        log,
+		idx:        idx,
+		idxLog:     idxLog,
+		opts:       opts,
+		lastAccess: time.Now(),
 	}, nil
 }
 
@@ -138,6 +141,8 @@ func (b *Bucket) Push(items item.Items) (outErr error) {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	b.lastAccess = time.Now()
 
 	loc, err := b.log.Push(items)
 	if err != nil {
@@ -188,6 +193,8 @@ func (b *Bucket) Pop(n int, dst item.Items) (item.Items, int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	b.lastAccess = time.Now()
+
 	iters, items, npopped, err := b.peek(n, dst)
 	if err != nil {
 		return b.maybeCopy(items), npopped, err
@@ -210,6 +217,8 @@ func (b *Bucket) Peek(n int, dst item.Items) (item.Items, int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	b.lastAccess = time.Now()
+
 	_, items, npopped, err := b.peek(n, dst)
 	return b.maybeCopy(items), npopped, err
 }
@@ -226,6 +235,8 @@ func (b *Bucket) Move(n int, dst item.Items, dstBuck *Bucket) (item.Items, int, 
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	b.lastAccess = time.Now()
 
 	iters, items, npopped, err := b.peek(n, dst)
 	if err != nil {
@@ -434,4 +445,11 @@ func (b *Bucket) Len() int {
 	}
 
 	return size
+}
+
+func (b *Bucket) LastAccess() time.Time {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.lastAccess
 }

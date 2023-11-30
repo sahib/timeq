@@ -47,14 +47,28 @@ type Options struct {
 	//       Only way to change is to create a new queue and shovel the
 	//       old data into it.
 	BucketFunc func(Key) Key
+
+	// MaxParallelOpenBuckets limits the number of buckets that can be opened
+	// in parallel. Normally, operations like Push() will create more and more
+	// buckets with time and old buckets do not get closed automatically, as
+	// we don't know when they get accessed again. If there are more buckets
+	// open than this number they get closed and will be re-opened if accessed
+	// again. If this happens frequently, this comes with a performance penalty.
+	// If you tend to access your data with rather random keys, you might want
+	// to increase this number, depending on how much resources you have.
+	//
+	// If this number is <= 0, then this feature is disabled, which is not
+	// recommended.
+	MaxParallelOpenBuckets int
 }
 
 // DefaultOptions give you a set of options that are good to enough
 // to try some expirements. Your mileage can vary a lot with different settings!
 func DefaultOptions() Options {
 	return Options{
-		Options:    bucket.DefaultOptions(),
-		BucketFunc: DefaultBucketFunc,
+		Options:                bucket.DefaultOptions(),
+		BucketFunc:             DefaultBucketFunc,
+		MaxParallelOpenBuckets: 3,
 	}
 }
 
@@ -163,7 +177,7 @@ func (q *Queue) Push(items Items) error {
 		items = items[nextIdx:]
 	}
 
-	return nil
+	return q.buckets.CloseUnused(q.opts.MaxParallelOpenBuckets)
 }
 
 const (
@@ -202,7 +216,12 @@ func (q *Queue) Peek(n int, dst Items) (Items, error) {
 // when the push was synced on `dstQueue`. This is safer than using
 // the Push/Pop itself.
 func (q *Queue) Move(n int, dst Items, dstQueue *Queue) (Items, error) {
-	return q.popOp(move, n, dst, dstQueue)
+	items, err := q.popOp(move, n, dst, dstQueue)
+	if err != nil {
+		return items, err
+	}
+
+	return items, dstQueue.buckets.CloseUnused(dstQueue.opts.MaxParallelOpenBuckets)
 }
 
 func (q *Queue) popOp(op int, n int, dst Items, dstQueue *Queue) (Items, error) {
@@ -292,6 +311,7 @@ func (q *Queue) DeleteLowerThan(key Key) (int, error) {
 	if err != nil {
 		return numDeleted, err
 	}
+
 	for _, bucket := range deletableBucks {
 		if err := q.buckets.Delete(bucket.Key()); err != nil {
 			return numDeleted, fmt.Errorf("bucket delete: %w", err)
@@ -336,5 +356,10 @@ func (q *Queue) Close() error {
 // latter case would be a "deadletter queue" where you put failed calculations for later
 // recalucations or a queue for unacknowledged items.
 func Shovel(src, dst *Queue) (int, error) {
-	return src.buckets.Shovel(dst.buckets)
+	n, err := src.buckets.Shovel(dst.buckets)
+	if err != nil {
+		return n, err
+	}
+
+	return n, dst.buckets.CloseUnused(dst.opts.MaxParallelOpenBuckets)
 }
