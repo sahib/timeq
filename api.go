@@ -174,7 +174,7 @@ const (
 
 // Pop fetches up to `n` items from the queue. It will only return
 // less items if the queue does not hold more items. If an error
-// occured no items are returned. If n < 0 then as many items as possible
+// occurred no items are returned. If n < 0 then as many items as possible
 // will be returned - this is not recommended as we call it the YOLO mode.
 //
 // The `dst` argument can be used to pass a pre-allocated slice that
