@@ -29,6 +29,8 @@ func DefaultBucketFunc(key Key) Key {
 	return key & timeMask
 }
 
+// TODO: API for creating bucket funcs from shifts and from minutes.
+
 // Options gives you some knobs to configure the queue.
 // Read the individual options carefully, as some of them
 // can only be set on the first call to Open()
