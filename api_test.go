@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -550,6 +552,103 @@ func TestAPIPushError(t *testing.T) {
 	dataPath := filepath.Join(dir, item.Key(0).String(), bucket.DataLogName)
 	require.NoError(t, os.Truncate(dataPath, 0))
 	require.Error(t, queue.Push(testutils.GenItems(0, 10, 1)))
+
+	require.NoError(t, queue.Close())
+}
+
+// helper to get the number of open file descriptors for current process:
+func openfds(t *testing.T) int {
+	ents, err := os.ReadDir("/proc/self/fd")
+	require.NoError(t, err)
+	return len(ents)
+}
+
+// helper to get the residual memory of the current process:
+func rssBytes(t *testing.T) int64 {
+	data, err := os.ReadFile("/proc/self/status")
+	require.NoError(t, err)
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if len(line) == 0 {
+			continue
+		}
+
+		split := strings.SplitN(line, ":", 2)
+		if strings.TrimSpace(split[0]) != "VmRSS" {
+			continue
+		}
+
+		kbs := strings.TrimSpace(strings.TrimSuffix(split[1], "kB"))
+		kb, err := strconv.ParseInt(kbs, 10, 64)
+		require.NoError(t, err)
+		return kb * 1024
+	}
+
+	require.Fail(t, "failed to find rss")
+	return 0
+}
+
+// Check if old buckets get closed when pushing a lot of data.
+// Old buckets would still claim the memory maps, causing more residual memory
+// usage and also increasing number of file descriptors.
+func TestAPIMaxParallelBuckets(t *testing.T) {
+	t.Parallel()
+
+	// Still create test dir to make sure it does not error out because of that:
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	const N = 1000 // bucket size
+	opts := DefaultOptions()
+	opts.BucketFunc = func(key item.Key) item.Key {
+		return (key / N) * N
+	}
+
+	// This test should fail if this is set to 0!
+	opts.MaxParallelOpenBuckets = 1
+
+	queue, err := Open(dir, opts)
+	require.NoError(t, err)
+
+	var refFds int
+	var refRss int64
+
+	for idx := 0; idx < 100; idx++ {
+		if idx == 10 {
+			refFds = openfds(t)
+			refRss = rssBytes(t)
+		}
+
+		if idx > 10 {
+			// it takes a bit of time for the values to stabilize.
+			fds := openfds(t)
+			rss := rssBytes(t)
+
+			if fac := float64(fds) / float64(refFds); fac > 1.5 {
+				require.Failf(
+					t,
+					"fd increase",
+					"number of fds increases: %v at bucket #%d",
+					fac,
+					idx,
+				)
+			}
+
+			if fac := float64(rss) / float64(refRss); fac > 1.5 {
+				require.Failf(
+					t,
+					"rss increase",
+					"number of rss increases: %v times at bucket #%d",
+					fac,
+					idx,
+				)
+			}
+		}
+
+		require.NoError(t, queue.Push(testutils.GenItems(idx*N, idx*N+N, 1)))
+	}
 
 	require.NoError(t, queue.Close())
 }

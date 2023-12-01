@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 
 	"github.com/sahib/timeq/index"
@@ -159,7 +160,7 @@ func (bs *Buckets) delete(key item.Key) error {
 
 	var err error
 	if buck != nil {
-		// make sure to close the bucket, otherwise we ill accumulate mmaps, which
+		// make sure to close the bucket, otherwise we will accumulate mmaps, which
 		// will sooner or later lead to memory allocation issues/errors.
 		err = buck.Close()
 	}
@@ -180,7 +181,7 @@ const (
 	// LoadedOnly iterates over all buckets that were loaded already.
 	LoadedOnly
 
-	// Load loads buckets that were not loaded yet.
+	// Load loads all buckets, including those that were not loaded yet.
 	Load
 )
 
@@ -337,4 +338,78 @@ func (bs *Buckets) Shovel(dstBs *Buckets) (int, error) {
 	}
 
 	return ntotalcopied, err
+}
+
+func (bs *Buckets) nloaded() int {
+	var nloaded int
+	bs.tree.Scan(func(_ item.Key, buck *Bucket) bool {
+		if buck != nil {
+			nloaded++
+		}
+		return true
+	})
+
+	return nloaded
+}
+
+// closeUnused trims down the number of open buckets to `maxBucks`
+// by closing the least recently used buckets first. Closed buckets
+// will be garbage collected and the memory mapping will be released.
+// The bucket can be re-opened again if it is accessed again.
+func (bs *Buckets) CloseUnused(maxBucks int) error {
+	if maxBucks <= 0 {
+		// this disables this check.
+		return nil
+	}
+
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+
+	// Fetch the number of loaded buckets.
+	// We could optimize that by having another count for that,
+	// but it should be cheap enough and this way we have only one
+	// source of truth.
+	nloaded := bs.nloaded()
+	if nloaded <= maxBucks {
+		// nothing to do, this should be the normal case.
+		return nil
+	}
+
+	buckets := make([]*Bucket, 0, bs.tree.Len())
+	bs.tree.Scan(func(_ item.Key, buck *Bucket) bool {
+		if buck == nil {
+			return true
+
+		}
+
+		buckets = append(buckets, buck)
+		return true
+	})
+
+	// Sort the buckets so that the lowest times get sorted to the front:
+	slices.SortFunc(buckets, func(a, b *Bucket) int {
+		return a.LastAccess().Compare(b.LastAccess())
+	})
+
+	// Close excess buckets and mark them as not loaded.
+	var closeErrs error
+	nClosable := nloaded - maxBucks
+	for idx := 0; idx < nClosable; idx++ {
+		bucket := buckets[idx]
+		key := bucket.Key()
+
+		if err := bucket.Close(); err != nil {
+			switch bs.opts.ErrorMode {
+			case ErrorModeAbort:
+				closeErrs = errors.Join(closeErrs, err)
+			case ErrorModeContinue:
+				bs.opts.Logger.Printf("failed to reap bucket %s", key)
+			}
+		}
+
+		// mark the bucket as "existing, but not loaded".
+		bs.tree.Set(key, nil)
+	}
+
+	return closeErrs
 }
