@@ -19,10 +19,10 @@ type Items = item.Items
 // Lower keys will be popped first.
 type Key = item.Key
 
-const timeMask = ^item.Key(0) << 38
+const timeMask = ^item.Key(0) << 37
 
 // DefaultBucketFunc assumes that `key` is a nanosecond unix timestamps
-// and divides data (roughly) in 9m minute buckets.
+// and divides data (roughly) in 2m minute buckets.
 func DefaultBucketFunc(key Key) Key {
 	// This should yield roughly 9m buckets for nanosecond timestamps.
 	// (and saves us expensive divisions)

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/otiai10/copy"
 	"github.com/sahib/timeq/index"
 	"github.com/sahib/timeq/item"
 	"github.com/sahib/timeq/vlog"
@@ -64,13 +65,26 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 
 	idxPath := filepath.Join(dir, "idx.log")
 	idx, err := index.Load(idxPath)
-	if err != nil || (idx.Len() == 0 && !log.IsEmpty()) {
+	fmt.Println("OPEN", idx.Len())
+
+	if err != nil || (idx.NEntries() == 0 && !log.IsEmpty()) {
+		fmt.Println("REINDEXING", err, idxPath)
+		debug.PrintStack()
+		if err := copy.Copy(dir, filepath.Join("/tmp", filepath.Base(dir))); err != nil {
+			fmt.Println("FAILED TO COPY", err)
+		}
+
 		// We try to re-generate the index from the value log if
 		// the index is damaged or missing (in case the value log has some entries).
 		//
 		// Since we have all the keys and offsets there too,
 		// we should be able to recover from that.
-		opts.Logger.Printf("failed to load index %s: %v", idxPath, err)
+		if err == nil {
+			opts.Logger.Printf("index is empty, but log is not (%s)", idxPath)
+		} else {
+			opts.Logger.Printf("failed to load index %s: %v", idxPath, err)
+		}
+
 		idx, err = index.FromVlog(log)
 		if err != nil {
 			// not much we can do for that case:
@@ -81,9 +95,14 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 			return nil, fmt.Errorf("index failover: could not remove broken index: %w", err)
 		}
 
+		if err := index.WriteIndex(idx, idxPath); err != nil {
+			return nil, fmt.Errorf("index: write during recover did not work")
+		}
+
 		opts.Logger.Printf("recovered index with %d entries", idx.Len())
 	}
 
+	// TODO: Write idx.log here?
 	idxLog, err := index.NewWriter(idxPath, opts.SyncMode&SyncIndex > 0)
 	if err != nil {
 		return nil, fmt.Errorf("index writer: %w", err)
@@ -115,6 +134,8 @@ func (b *Bucket) Sync(force bool) error {
 func (b *Bucket) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	fmt.Println("CLOSING", b.key)
 
 	return errors.Join(
 		b.log.Sync(true),
@@ -391,7 +412,7 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
 		}
 
 		if partialFound {
-			// we found an enrty in the log that is >= key.
+			// we found an entry in the log that is >= key.
 			// resize the index entry to skip the entries before.
 			b.idx.Set(partialLoc)
 			ndeleted += int(loc.Len - partialLoc.Len)

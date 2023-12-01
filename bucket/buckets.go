@@ -31,12 +31,14 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read-dir: %w", err)
 	}
+	fmt.Println(ents, dir)
 
 	var dirsHandled int
 	tree := btree.Map[item.Key, *Bucket]{}
 	trailers := make(map[item.Key]index.Trailer, len(ents))
 	for _, ent := range ents {
 		if !ent.IsDir() {
+			fmt.Println("not a dir")
 			continue
 		}
 
@@ -48,6 +50,7 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 			}
 
 			opts.Logger.Printf("failed to parse %s as bucket path\n", buckPath)
+			fmt.Println("bad bucket path")
 			continue
 		}
 
@@ -60,11 +63,13 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 			}
 
 			opts.Logger.Printf("failed to read trailer on bucket %s: %v", buckPath, err)
+			fmt.Println("bad trailer", buckPath)
 			continue
 		}
 
 		if trailer.TotalEntries == 0 {
 			// It's an empty bucket. Delete it.
+			// Empty means that it contains no or only deleted elements.
 			if err := os.RemoveAll(buckPath); err != nil {
 				if opts.ErrorMode == ErrorModeAbort {
 					return nil, err
@@ -72,8 +77,7 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 
 				opts.Logger.Printf("failed to remove old bucket: %v", err)
 			}
-
-			continue
+			fmt.Println("Empty bucket!")
 		}
 
 		// nil entries indicate buckets that were not loaded yet:
@@ -85,6 +89,7 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 		return nil, fmt.Errorf("%s is not empty; refusing to create db", dir)
 	}
 
+	fmt.Println("TREE", tree.Len())
 	return &Buckets{
 		dir:      dir,
 		tree:     tree,

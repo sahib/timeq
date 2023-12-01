@@ -46,3 +46,23 @@ func (w *Writer) Sync(force bool) error {
 
 	return w.fd.Sync()
 }
+
+func WriteIndex(idx *Index, path string) error {
+	iter := idx.Iter()
+	writer, err := NewWriter(path, true)
+	if err != nil {
+		return err
+	}
+
+	var totalEntries item.Off
+	for iter.Next() {
+		loc := iter.Value()
+		writer.Push(loc, Trailer{
+			TotalEntries: totalEntries,
+		})
+
+		totalEntries++
+	}
+
+	return nil
+}

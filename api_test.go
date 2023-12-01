@@ -652,3 +652,18 @@ func TestAPIMaxParallelBuckets(t *testing.T) {
 
 	require.NoError(t, queue.Close())
 }
+
+func TestBug(t *testing.T) {
+	opts := DefaultOptions()
+	opts.Logger = bucket.DefaultLogger()
+	queue, err := Open("/home/chris/code/timeq/db", opts)
+	require.NoError(t, err)
+
+	queue.buckets.Iter(bucket.Load, func(key item.Key, b *bucket.Bucket) error {
+		fmt.Println("LOADED", key)
+		return nil
+	})
+
+	require.NoError(t, queue.Close())
+
+}

@@ -11,13 +11,14 @@ import (
 // Index is an in-memory representation of the batch index as b-tree structure.
 type Index struct {
 	m        btree.Map[item.Key, []item.Location]
+	len      item.Off
 	nentries item.Off
 }
 
 // FromVlog produces an index from the data in the value log. It's
 // main use is to re-generate the index in case the index file is
 // damaged or broken in some way. The resulting index is likely not
-// the same as before, but probably a bit cleaner.
+// the same as before, but will include items that were popped already.
 func FromVlog(log *vlog.Log) (*Index, error) {
 	// we're cheating a little here by trusting the iterator
 	// to go not over the end, even if the Len is bogus.
@@ -31,7 +32,7 @@ func FromVlog(log *vlog.Log) (*Index, error) {
 	var it item.Item
 	var prevLoc item.Location
 	var lastLoc item.Location
-	var isInitialItem bool = true
+	var isInitialItem = true
 
 	// Go over the data and try to find runs of data that are sorted in
 	// ascending order. Each deviant item is the start of a new run.
@@ -94,6 +95,7 @@ func Load(path string) (*Index, error) {
 func (i *Index) Set(loc item.Location) (item.Location, int) {
 	oldLocs, _ := i.m.Get(loc.Key)
 	i.m.Set(loc.Key, append(oldLocs, loc))
+	i.len += loc.Len
 	i.nentries += loc.Len
 	return loc, 0
 }
@@ -104,7 +106,8 @@ func (i *Index) Delete(key item.Key) {
 		return
 	}
 
-	i.nentries -= oldLocs[0].Len
+	i.len -= oldLocs[0].Len
+	i.nentries += oldLocs[0].Len
 	if len(oldLocs) > 1 {
 		// delete one of the keys:
 		i.m.Set(key, oldLocs[1:])
@@ -117,12 +120,19 @@ func (i *Index) Delete(key item.Key) {
 // Len returns the number of items in the WAL.
 // (Not the number of locations or batches!)
 func (i *Index) Len() item.Off {
+	return i.len
+}
+
+// NEntries returns the number of entries in the
+// index. This is not the same Len() as a deleted
+// item is also inserted into the index.
+func (i *Index) NEntries() item.Off {
 	return i.nentries
 }
 
 func (i *Index) Trailer() Trailer {
 	return Trailer{
-		TotalEntries: i.nentries,
+		TotalEntries: i.len,
 	}
 }
 
