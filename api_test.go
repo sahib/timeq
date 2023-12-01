@@ -652,3 +652,12 @@ func TestAPIMaxParallelBuckets(t *testing.T) {
 
 	require.NoError(t, queue.Close())
 }
+
+func TestAPIFixedSizeBucketFunc(t *testing.T) {
+	// just to make sure that the func does not break,
+	// even though the test is really stupid.
+	fn := FixedSizeBucketFunc(100)
+	for idx := 0; idx < 1000; idx++ {
+		require.Equal(t, item.Key(idx/100)*100, fn(item.Key(idx)))
+	}
+}

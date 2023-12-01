@@ -64,13 +64,18 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 
 	idxPath := filepath.Join(dir, "idx.log")
 	idx, err := index.Load(idxPath)
-	if err != nil || (idx.Len() == 0 && !log.IsEmpty()) {
+	if err != nil || (idx.NEntries() == 0 && !log.IsEmpty()) {
 		// We try to re-generate the index from the value log if
 		// the index is damaged or missing (in case the value log has some entries).
 		//
 		// Since we have all the keys and offsets there too,
 		// we should be able to recover from that.
-		opts.Logger.Printf("failed to load index %s: %v", idxPath, err)
+		if err == nil {
+			opts.Logger.Printf("index is empty, but log is not (%s)", idxPath)
+		} else {
+			opts.Logger.Printf("failed to load index %s: %v", idxPath, err)
+		}
+
 		idx, err = index.FromVlog(log)
 		if err != nil {
 			// not much we can do for that case:
@@ -79,6 +84,13 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 
 		if err := os.Remove(idxPath); err != nil {
 			return nil, fmt.Errorf("index failover: could not remove broken index: %w", err)
+		}
+
+		// We should write the repaired index after repair, so we don't have to do it
+		// again if this gets interrupted. Also this allows us to just push to the index
+		// instead of having logic later that writes the not yet written part.
+		if err := index.WriteIndex(idx, idxPath); err != nil {
+			return nil, fmt.Errorf("index: write during recover did not work")
 		}
 
 		opts.Logger.Printf("recovered index with %d entries", idx.Len())
@@ -391,7 +403,7 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
 		}
 
 		if partialFound {
-			// we found an enrty in the log that is >= key.
+			// we found an entry in the log that is >= key.
 			// resize the index entry to skip the entries before.
 			b.idx.Set(partialLoc)
 			ndeleted += int(loc.Len - partialLoc.Len)

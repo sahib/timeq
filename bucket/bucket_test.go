@@ -397,12 +397,17 @@ func TestBucketRegenWith(t *testing.T) {
 
 	for _, tc := range tcs {
 		t.Run(tc.Name, func(t *testing.T) {
-			testBucketRegenWith(t, tc.IsDamaged, tc.DamageFn)
+			t.Run("noreopen", func(t *testing.T) {
+				testBucketRegenWith(t, tc.IsDamaged, false, tc.DamageFn)
+			})
+			t.Run("reopen", func(t *testing.T) {
+				testBucketRegenWith(t, tc.IsDamaged, true, tc.DamageFn)
+			})
 		})
 	}
 }
 
-func testBucketRegenWith(t *testing.T, isDamaged bool, damageFn func(path string) error) {
+func testBucketRegenWith(t *testing.T, isDamaged bool, reopen bool, damageFn func(path string) error) {
 	buck, dir := createEmptyBucket(t)
 	defer os.RemoveAll(dir)
 
@@ -419,7 +424,8 @@ func testBucketRegenWith(t *testing.T, isDamaged bool, damageFn func(path string
 	require.NoError(t, buck.Close())
 
 	bucketDir := filepath.Join(dir, buck.Key().String())
-	require.NoError(t, damageFn(filepath.Join(bucketDir, "idx.log")))
+	idxPath := filepath.Join(bucketDir, "idx.log")
+	require.NoError(t, damageFn(idxPath))
 
 	// Re-opening the bucket should regenerate the index
 	// from the value log contents:
@@ -429,9 +435,24 @@ func testBucketRegenWith(t *testing.T, isDamaged bool, damageFn func(path string
 	opts.Logger = &writerLogger{
 		w: &logBuffer,
 	}
+
+	// This should trigger the reindex:
 	buck, err = Open(bucketDir, opts)
 	require.NoError(t, err)
 
+	if reopen {
+		// on reindex we store the index in memory.
+		// make sure we do not make mistakes during writing.
+		require.NoError(t, buck.Close())
+		buck, err = Open(bucketDir, opts)
+		require.NoError(t, err)
+	}
+
+	// The idx file should already exist again:
+	_, err = os.Stat(idxPath)
+	require.NoError(t, err)
+
+	// Let's check it gets created correctly:
 	got, npopped, err := buck.Pop(N, nil)
 	require.NoError(t, err)
 	require.Equal(t, N, npopped)
@@ -441,6 +462,5 @@ func testBucketRegenWith(t *testing.T, isDamaged bool, damageFn func(path string
 		require.NotEmpty(t, logBuffer.String())
 	} else {
 		require.Empty(t, logBuffer.String())
-
 	}
 }

@@ -65,6 +65,7 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 
 		if trailer.TotalEntries == 0 {
 			// It's an empty bucket. Delete it.
+			// Empty means that it contains no or only deleted elements.
 			if err := os.RemoveAll(buckPath); err != nil {
 				if opts.ErrorMode == ErrorModeAbort {
 					return nil, err
@@ -72,8 +73,6 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 
 				opts.Logger.Printf("failed to remove old bucket: %v", err)
 			}
-
-			continue
 		}
 
 		// nil entries indicate buckets that were not loaded yet:

@@ -19,14 +19,35 @@ type Items = item.Items
 // Lower keys will be popped first.
 type Key = item.Key
 
-const timeMask = ^item.Key(0) << 38
-
 // DefaultBucketFunc assumes that `key` is a nanosecond unix timestamps
-// and divides data (roughly) in 9m minute buckets.
-func DefaultBucketFunc(key Key) Key {
-	// This should yield roughly 9m buckets for nanosecond timestamps.
-	// (and saves us expensive divisions)
-	return key & timeMask
+// and divides data (roughly) in 2m minute buckets.
+var DefaultBucketFunc = ShiftBucketFunc(37)
+
+// ShiftBucketFunc creates a fast BucketFunc that divides data into buckets
+// by masking `shift` less significant bits of the key. With a shift
+// of 37 you roughly get 2m buckets (if your key input are nanosecond-timestamps).
+// If you want to calculate the size of a shift, use this formula:
+// (2 ** shift) / (1e9 / 60) = minutes
+func ShiftBucketFunc(shift int) func(key Key) Key {
+	timeMask := ^item.Key(0) << shift
+	return func(key Key) Key {
+		return key & timeMask
+	}
+}
+
+// FixedSizeBucketFunc returns a BucketFunc that divides buckets into
+// equal sized buckets with `n` entries. This can also be used to create
+// time-based keys, if you use nanosecond based keys and pass time.Minute
+// to create a buckets with a size of one minute.
+func FixedSizeBucketFunc(n uint64) func(key Key) Key {
+	if n == 0 {
+		// avoid zero division.
+		n = 1
+	}
+
+	return func(key Key) Key {
+		return (key / item.Key(n)) * item.Key(n)
+	}
 }
 
 // Options gives you some knobs to configure the queue.
