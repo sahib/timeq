@@ -3,6 +3,7 @@ package index
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 
 	"github.com/sahib/timeq/item"
@@ -59,9 +60,9 @@ func WriteIndex(idx *Index, path string) error {
 	var totalEntries item.Off
 	for iter.Next() {
 		loc := iter.Value()
-		writer.Push(loc, Trailer{
-			TotalEntries: totalEntries,
-		})
+		if err := writer.Push(loc, Trailer{TotalEntries: totalEntries}); err != nil {
+			return fmt.Errorf("push: %w", err)
+		}
 
 		totalEntries++
 	}
