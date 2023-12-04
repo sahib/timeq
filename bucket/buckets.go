@@ -219,7 +219,6 @@ func (bs *Buckets) Iter(mode IterMode, fn func(key item.Key, b *Bucket) error) e
 
 			return false
 		}
-
 		return true
 	})
 	return err
@@ -263,6 +262,7 @@ func (bs *Buckets) Close() error {
 func (bs *Buckets) Len() int {
 	var len int
 	_ = bs.Iter(IncludeNil, func(key item.Key, b *Bucket) error {
+		// fmt.Println(key, b)
 		if b == nil {
 			trailer, ok := bs.trailers[key]
 			if !ok {
@@ -396,6 +396,7 @@ func (bs *Buckets) CloseUnused(maxBucks int) error {
 	for idx := 0; idx < nClosable; idx++ {
 		bucket := buckets[idx]
 		key := bucket.Key()
+		trailer := bucket.idx.Trailer()
 
 		if err := bucket.Close(); err != nil {
 			switch bs.opts.ErrorMode {
@@ -408,6 +409,7 @@ func (bs *Buckets) CloseUnused(maxBucks int) error {
 
 		// mark the bucket as "existing, but not loaded".
 		bs.tree.Set(key, nil)
+		bs.trailers[key] = trailer
 	}
 
 	return closeErrs

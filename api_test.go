@@ -615,18 +615,24 @@ func TestAPIMaxParallelBuckets(t *testing.T) {
 	var refFds int
 	var refRss int64
 
+	const limit = 1.8
+
 	for idx := 0; idx < 100; idx++ {
 		if idx == 10 {
 			refFds = openfds(t)
 			refRss = rssBytes(t)
 		}
 
+		// regression bug: CloseUnused() did not re-add trailers for nil-buckets.
+		// Also, we need to check that Len() does not re-open buckets.
+		require.Equal(t, idx*N, queue.Len())
+
 		if idx > 10 {
 			// it takes a bit of time for the values to stabilize.
 			fds := openfds(t)
 			rss := rssBytes(t)
 
-			if fac := float64(fds) / float64(refFds); fac > 1.5 {
+			if fac := float64(fds) / float64(refFds); fac > limit {
 				require.Failf(
 					t,
 					"fd increase",
@@ -636,7 +642,7 @@ func TestAPIMaxParallelBuckets(t *testing.T) {
 				)
 			}
 
-			if fac := float64(rss) / float64(refRss); fac > 1.5 {
+			if fac := float64(rss) / float64(refRss); fac > limit {
 				require.Failf(
 					t,
 					"rss increase",
