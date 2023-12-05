@@ -139,7 +139,7 @@ func (b *Bucket) Close() error {
 func recoverMmapError(dstErr *error) {
 	// See comment in Open()
 	if recErr := recover(); recErr != nil {
-		*dstErr = fmt.Errorf("panic (check: enough space left / file issues): %v", recErr)
+		*dstErr = fmt.Errorf("panic (check: enough space left / file issues): %v - trace:\n%s", recErr, string(debug.Stack()))
 	}
 }
 

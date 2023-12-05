@@ -157,7 +157,7 @@ func (bs *Buckets) delete(key item.Key) error {
 		return fmt.Errorf("no bucket with key %v", key)
 	}
 
-	bs.trailers[buck.Key()] = index.Trailer{}
+	bs.trailers[key] = index.Trailer{}
 
 	var err error
 	if buck != nil {
