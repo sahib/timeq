@@ -157,6 +157,8 @@ func (bs *Buckets) delete(key item.Key) error {
 		return fmt.Errorf("no bucket with key %v", key)
 	}
 
+	bs.trailers[key] = index.Trailer{}
+
 	var err error
 	if buck != nil {
 		// make sure to close the bucket, otherwise we will accumulate mmaps, which
@@ -219,7 +221,6 @@ func (bs *Buckets) Iter(mode IterMode, fn func(key item.Key, b *Bucket) error) e
 
 			return false
 		}
-
 		return true
 	})
 	return err
@@ -256,6 +257,7 @@ func (bs *Buckets) clear() error {
 
 func (bs *Buckets) Close() error {
 	return bs.Iter(LoadedOnly, func(_ item.Key, b *Bucket) error {
+		bs.trailers[b.Key()] = b.idx.Trailer()
 		return b.Close()
 	})
 }
@@ -263,6 +265,7 @@ func (bs *Buckets) Close() error {
 func (bs *Buckets) Len() int {
 	var len int
 	_ = bs.Iter(IncludeNil, func(key item.Key, b *Bucket) error {
+		// fmt.Println(key, b)
 		if b == nil {
 			trailer, ok := bs.trailers[key]
 			if !ok {
@@ -396,6 +399,7 @@ func (bs *Buckets) CloseUnused(maxBucks int) error {
 	for idx := 0; idx < nClosable; idx++ {
 		bucket := buckets[idx]
 		key := bucket.Key()
+		trailer := bucket.idx.Trailer()
 
 		if err := bucket.Close(); err != nil {
 			switch bs.opts.ErrorMode {
@@ -406,8 +410,8 @@ func (bs *Buckets) CloseUnused(maxBucks int) error {
 			}
 		}
 
-		// mark the bucket as "existing, but not loaded".
 		bs.tree.Set(key, nil)
+		bs.trailers[key] = trailer
 	}
 
 	return closeErrs
