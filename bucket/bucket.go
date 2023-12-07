@@ -381,6 +381,7 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
 
 	var pushErr error
 	var deleteEntries []item.Key
+	var partialSetEntries []item.Location
 	for iter := b.idx.Iter(); iter.Next(); {
 		loc := iter.Value()
 		if loc.Key >= key {
@@ -405,11 +406,16 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
 		if partialFound {
 			// we found an entry in the log that is >= key.
 			// resize the index entry to skip the entries before.
-			b.idx.Set(partialLoc)
+			// we should be careful not to mutate the map during iteration:
+			// https://github.com/tidwall/btree/issues/39
+			partialSetEntries = append(partialSetEntries, partialLoc)
 			ndeleted += int(loc.Len - partialLoc.Len)
-			pushErr = errors.Join(pushErr, b.idxLog.Push(partialLoc, index.Trailer{
-				TotalEntries: lenBefore - item.Off(ndeleted),
-			}))
+			pushErr = errors.Join(
+				pushErr,
+				b.idxLog.Push(partialLoc, index.Trailer{
+					TotalEntries: lenBefore - item.Off(ndeleted),
+				}),
+			)
 		} else {
 			// nothing found, this index entry can be dropped.
 			ndeleted += int(loc.Len)
@@ -427,6 +433,10 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
 		}, index.Trailer{
 			TotalEntries: lenBefore - item.Off(ndeleted),
 		}))
+	}
+
+	for _, loc := range partialSetEntries {
+		b.idx.Set(loc)
 	}
 
 	return ndeleted, errors.Join(pushErr, b.idxLog.Sync(false))
