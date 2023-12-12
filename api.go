@@ -121,7 +121,7 @@ func Open(dir string, opts Options) (*Queue, error) {
 		return nil, err
 	}
 
-	bs, err := bucket.LoadAll(dir, opts.Options)
+	bs, err := bucket.LoadAll(dir, opts.MaxParallelOpenBuckets, opts.Options)
 	if err != nil {
 		return nil, fmt.Errorf("buckets: %w", err)
 	}
@@ -198,7 +198,7 @@ func (q *Queue) Push(items Items) error {
 		items = items[nextIdx:]
 	}
 
-	return q.buckets.CloseUnused(q.opts.MaxParallelOpenBuckets)
+	return nil
 }
 
 const (
@@ -242,7 +242,7 @@ func (q *Queue) Move(n int, dst Items, dstQueue *Queue) (Items, error) {
 		return items, err
 	}
 
-	return items, dstQueue.buckets.CloseUnused(dstQueue.opts.MaxParallelOpenBuckets)
+	return items, nil
 }
 
 func (q *Queue) popOp(op int, n int, dst Items, dstQueue *Queue) (Items, error) {
@@ -382,5 +382,5 @@ func Shovel(src, dst *Queue) (int, error) {
 		return n, err
 	}
 
-	return n, dst.buckets.CloseUnused(dst.opts.MaxParallelOpenBuckets)
+	return n, nil
 }

@@ -29,7 +29,7 @@ func TestBucketsOpenEmpty(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
-	bs, err := LoadAll(dir, DefaultOptions())
+	bs, err := LoadAll(dir, 1, DefaultOptions())
 	require.NoError(t, err)
 	require.Equal(t, 0, bs.Len())
 	require.NoError(t, bs.Sync())
@@ -43,7 +43,7 @@ func TestBucketsClearEmpty(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
-	bs, err := LoadAll(dir, DefaultOptions())
+	bs, err := LoadAll(dir, 1, DefaultOptions())
 	require.NoError(t, err)
 	require.NoError(t, bs.Clear())
 	require.NoError(t, bs.Close())
@@ -66,7 +66,7 @@ func TestBucketsIter(t *testing.T) {
 		)
 	}
 
-	bs, err := LoadAll(dir, DefaultOptions())
+	bs, err := LoadAll(dir, 1, DefaultOptions())
 	require.NoError(t, err)
 
 	// load bucket 80 early to check if iter can handle
@@ -93,7 +93,7 @@ func TestBucketsForKey(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	writeDummyBucket(t, dir, 33, testutils.GenItems(0, 10, 1))
-	bs, err := LoadAll(dir, DefaultOptions())
+	bs, err := LoadAll(dir, 1, DefaultOptions())
 	require.NoError(t, err)
 
 	// open freshly:
@@ -134,7 +134,7 @@ func TestBucketsValidateFunc(t *testing.T) {
 	writeDummyBucket(t, dir, 30, testutils.GenItems(30, 40, 1))
 	writeDummyBucket(t, dir, 50, testutils.GenItems(50, 60, 1))
 
-	bs, err := LoadAll(dir, DefaultOptions())
+	bs, err := LoadAll(dir, 1, DefaultOptions())
 	require.NoError(t, err)
 
 	require.NoError(t, bs.ValidateBucketKeys(func(key item.Key) item.Key {
@@ -161,7 +161,7 @@ func TestBucketsDelete(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
-	bs, err := LoadAll(dir, DefaultOptions())
+	bs, err := LoadAll(dir, 1, DefaultOptions())
 	require.NoError(t, err)
 
 	// Delete non-existing yet.
@@ -190,6 +190,6 @@ func TestBucketsNotEmptyDir(t *testing.T) {
 	// Loading such a dir should error out as it seems that we try to open a directory with other things
 	// in it that are not buckets at all. The caller can prepare this by having a os.Remove() of the contents,
 	// but we should not do this automatically.
-	_, err = LoadAll(dir, DefaultOptions())
+	_, err = LoadAll(dir, 1, DefaultOptions())
 	require.Error(t, err)
 }

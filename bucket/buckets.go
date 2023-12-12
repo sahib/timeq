@@ -15,14 +15,15 @@ import (
 )
 
 type Buckets struct {
-	mu       sync.Mutex
-	dir      string
-	tree     btree.Map[item.Key, *Bucket]
-	trailers map[item.Key]index.Trailer
-	opts     Options
+	mu                 sync.Mutex
+	dir                string
+	tree               btree.Map[item.Key, *Bucket]
+	trailers           map[item.Key]index.Trailer
+	opts               Options
+	maxParallelBuckets int
 }
 
-func LoadAll(dir string, opts Options) (*Buckets, error) {
+func LoadAll(dir string, maxParallelBuckets int, opts Options) (*Buckets, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("mkdir: %w", err)
 	}
@@ -85,10 +86,11 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 	}
 
 	return &Buckets{
-		dir:      dir,
-		tree:     tree,
-		opts:     opts,
-		trailers: trailers,
+		dir:                dir,
+		tree:               tree,
+		opts:               opts,
+		trailers:           trailers,
+		maxParallelBuckets: maxParallelBuckets,
 	}, nil
 }
 
@@ -141,7 +143,7 @@ func (bs *Buckets) forKey(key item.Key) (*Bucket, error) {
 	}
 
 	bs.tree.Set(key, buck)
-	return buck, nil
+	return buck, bs.closeUnused(bs.maxParallelBuckets)
 }
 
 func (bs *Buckets) Delete(key item.Key) error {
@@ -265,7 +267,6 @@ func (bs *Buckets) Close() error {
 func (bs *Buckets) Len() int {
 	var len int
 	_ = bs.Iter(IncludeNil, func(key item.Key, b *Bucket) error {
-		// fmt.Println(key, b)
 		if b == nil {
 			trailer, ok := bs.trailers[key]
 			if !ok {
@@ -354,18 +355,15 @@ func (bs *Buckets) nloaded() int {
 	return nloaded
 }
 
-// closeUnused trims down the number of open buckets to `maxBucks`
+// CloseUnused trims down the number of open buckets to `maxBucks`
 // by closing the least recently used buckets first. Closed buckets
 // will be garbage collected and the memory mapping will be released.
 // The bucket can be re-opened again if it is accessed again.
-func (bs *Buckets) CloseUnused(maxBucks int) error {
+func (bs *Buckets) closeUnused(maxBucks int) error {
 	if maxBucks <= 0 {
 		// this disables this check.
 		return nil
 	}
-
-	bs.mu.Lock()
-	defer bs.mu.Unlock()
 
 	// Fetch the number of loaded buckets.
 	// We could optimize that by having another count for that,
