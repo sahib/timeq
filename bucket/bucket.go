@@ -38,8 +38,7 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 	// Setting this allows us to handle mmap() errors gracefully.
 	// The typical scenario where those errors happen, are full filesystems.
 	// This can happen like this:
-	//
-	// * ftruncate() grows a file beyond the available space without error.
+	//	// * ftruncate() grows a file beyond the available space without error.
 	//   Since the new "space" are just zeros that do not take any physical
 	//   space this makes sense.
 	// * Accessing this mapped memory however will cause the filesystem to actually
@@ -105,6 +104,8 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 	if err != nil {
 		return nil, err
 	}
+
+	fmt.Println("OPEN", key.String())
 
 	return &Bucket{
 		dir:        dir,

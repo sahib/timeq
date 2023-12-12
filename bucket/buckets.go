@@ -399,6 +399,7 @@ func (bs *Buckets) closeUnused(maxBucks int) error {
 		key := bucket.Key()
 		trailer := bucket.idx.Trailer()
 
+		fmt.Println("CLOSE", bucket.Key().String())
 		if err := bucket.Close(); err != nil {
 			switch bs.opts.ErrorMode {
 			case ErrorModeAbort:
