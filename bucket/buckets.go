@@ -122,14 +122,14 @@ func (bs *Buckets) buckPath(key item.Key) string {
 // ForKey returns a bucket for the specified key and creates if not there yet.
 // `key` must be the lowest key that is stored in this bucket. You cannot just
 // use a key that is somewhere in the bucket.
-func (bs *Buckets) ForKey(key item.Key) (*Bucket, error) {
+func (bs *Buckets) ForKey(key item.Key, closeUnused bool) (*Bucket, error) {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 
-	return bs.forKey(key)
+	return bs.forKey(key, closeUnused)
 }
 
-func (bs *Buckets) forKey(key item.Key) (*Bucket, error) {
+func (bs *Buckets) forKey(key item.Key, closeUnused bool) (*Bucket, error) {
 	buck, _ := bs.tree.Get(key)
 	if buck != nil {
 		// fast path:
@@ -143,7 +143,11 @@ func (bs *Buckets) forKey(key item.Key) (*Bucket, error) {
 	}
 
 	bs.tree.Set(key, buck)
-	return buck, bs.closeUnused(bs.maxParallelBuckets)
+	if closeUnused {
+		return buck, bs.closeUnused(bs.maxParallelBuckets)
+	}
+
+	return buck, nil
 }
 
 func (bs *Buckets) Delete(key item.Key) error {
@@ -192,10 +196,12 @@ const (
 // It does not count as error.
 var IterStop = errors.New("iteration stopped")
 
-// Iter iterats over all buckets, starting with the lowest. The buckets include
+// Iter iterates over all buckets, starting with the lowest. The buckets include
 // unloaded depending on `mode`. The error you return in `fn` will be returned
 // by Iter() and iteration immediately stops. If you return IterStop then
 // Iter() will return nil and will also stop the iteration.
+//
+// NOTE: Iter() does not clean up unused buckets.
 func (bs *Buckets) Iter(mode IterMode, fn func(key item.Key, b *Bucket) error) error {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
@@ -209,7 +215,7 @@ func (bs *Buckets) Iter(mode IterMode, fn func(key item.Key, b *Bucket) error) e
 
 			if mode == Load {
 				// load the bucket fresh from disk:
-				buck, err = bs.forKey(key)
+				buck, err = bs.forKey(key, false)
 				if err != nil {
 					return false
 				}
@@ -313,22 +319,24 @@ func (bs *Buckets) Shovel(dstBs *Buckets) (int, error) {
 		// In this case we have to copy the items more intelligently,
 		// since we have to append it to the destination bucket.
 
-		if srcBuck == nil {
-			var err error
-			srcBuck, err = Open(bs.buckPath(key), bs.opts)
-			if err != nil {
-				return err
-			}
+		srcBuck, err := bs.forKey(key, true)
+		if err != nil {
+			return err
 		}
 
 		// NOTE: This assumes that the destination has the same bucket func.
-		dstBuck, err := dstBs.forKey(key)
+		dstBuck, err := dstBs.forKey(key, true)
 		if err != nil {
 			return err
 		}
 
 		_, ncopied, err := srcBuck.Move(math.MaxInt, buf, dstBuck)
 		ntotalcopied += ncopied
+
+		if err := bs.closeUnused(bs.maxParallelBuckets); err != nil {
+			return err
+		}
+
 		return err
 	})
 
@@ -355,10 +363,13 @@ func (bs *Buckets) nloaded() int {
 	return nloaded
 }
 
-// CloseUnused trims down the number of open buckets to `maxBucks`
-// by closing the least recently used buckets first. Closed buckets
-// will be garbage collected and the memory mapping will be released.
-// The bucket can be re-opened again if it is accessed again.
+func (bs *Buckets) CloseUnused(maxBucks int) error {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+
+	return bs.closeUnused(maxBucks)
+}
+
 func (bs *Buckets) closeUnused(maxBucks int) error {
 	if maxBucks <= 0 {
 		// this disables this check.
@@ -399,7 +410,6 @@ func (bs *Buckets) closeUnused(maxBucks int) error {
 		key := bucket.Key()
 		trailer := bucket.idx.Trailer()
 
-		fmt.Println("CLOSE", bucket.Key().String())
 		if err := bucket.Close(); err != nil {
 			switch bs.opts.ErrorMode {
 			case ErrorModeAbort:

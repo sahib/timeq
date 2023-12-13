@@ -59,6 +59,7 @@ func ReadTrailer(path string) (Trailer, error) {
 	if err != nil {
 		return Trailer{}, err
 	}
+	defer fd.Close()
 
 	info, err := fd.Stat()
 	if err != nil {
@@ -69,7 +70,6 @@ func ReadTrailer(path string) (Trailer, error) {
 		return Trailer{TotalEntries: 0}, nil
 	}
 
-	defer fd.Close()
 	if _, err := fd.Seek(-TrailerSize, io.SeekEnd); err != nil {
 		return Trailer{}, err
 	}

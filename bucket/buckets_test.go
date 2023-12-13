@@ -71,7 +71,7 @@ func TestBucketsIter(t *testing.T) {
 
 	// load bucket 80 early to check if iter can handle
 	// already loaded buckets too.
-	_, err = bs.ForKey(80)
+	_, err = bs.ForKey(80, true)
 	require.NoError(t, err)
 
 	got := []item.Key{}
@@ -97,18 +97,18 @@ func TestBucketsForKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// open freshly:
-	b1, err := bs.ForKey(32)
+	b1, err := bs.ForKey(32, true)
 	require.NoError(t, err)
 	require.Equal(t, item.Key(32), b1.Key())
 
 	// open again, must be the same memory:
-	b2, err := bs.ForKey(32)
+	b2, err := bs.ForKey(32, true)
 	require.NoError(t, err)
 	require.Equal(t, item.Key(32), b2.Key())
 	require.Equal(t, b1, b2)
 
 	// existing bucket should load fine:
-	b3, err := bs.ForKey(33)
+	b3, err := bs.ForKey(33, true)
 	require.NoError(t, err)
 	require.Equal(t, item.Key(33), b3.Key())
 	require.Equal(t, 10, b3.Len())
@@ -117,7 +117,7 @@ func TestBucketsForKey(t *testing.T) {
 
 	// open again, must be the same memory:
 
-	b3c, err := bs.ForKey(33)
+	b3c, err := bs.ForKey(33, true)
 	require.NoError(t, err)
 	require.Equal(t, item.Key(33), b3c.Key())
 	require.Equal(t, 0, b3c.Len())
@@ -168,7 +168,7 @@ func TestBucketsDelete(t *testing.T) {
 	require.Error(t, bs.Delete(50))
 
 	// Create bucket and delete again:
-	_, err = bs.ForKey(50)
+	_, err = bs.ForKey(50, true)
 	require.NoError(t, err)
 	require.NoError(t, bs.Delete(50))
 	require.Error(t, bs.Delete(50))

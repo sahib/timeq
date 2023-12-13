@@ -105,8 +105,6 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 		return nil, err
 	}
 
-	fmt.Println("OPEN", key.String())
-
 	return &Bucket{
 		dir:        dir,
 		key:        item.Key(key),

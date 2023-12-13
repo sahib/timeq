@@ -119,7 +119,7 @@ func TestLogOpenNonExisting(t *testing.T) {
 
 func TestLogNextSize(t *testing.T) {
 	var kb int64 = 1024
-	var mb int64 = 1024 * kb
+	var mb = 1024 * kb
 	require.Equal(t, int64(0), nextSize(-1))
 	require.Equal(t, 8*PageSize, nextSize(0))
 	require.Equal(t, 8*PageSize, nextSize(1))

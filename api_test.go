@@ -667,3 +667,113 @@ func TestAPIFixedSizeBucketFunc(t *testing.T) {
 		require.Equal(t, item.Key(idx/100)*100, fn(item.Key(idx)))
 	}
 }
+
+func TestAPIDoNotCrashOnMultiBucketPop(t *testing.T) {
+	t.Parallel()
+
+	// Still create test dir to make sure it does not error out because of that:
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	const N = 1000 // bucket size
+	opts := DefaultOptions()
+	opts.BucketFunc = func(key item.Key) item.Key {
+		return (key / N) * N
+	}
+
+	// This test should fail if this is set to 0!
+	opts.MaxParallelOpenBuckets = 1
+	opts.Copy = false
+
+	queue, err := Open(dir, opts)
+	require.NoError(t, err)
+
+	// Add several buckets to the queue:
+	for idx := 0; idx < N; idx++ {
+		off := idx * N
+		require.NoError(t, queue.Push(testutils.GenItems(off, off+N, 1)))
+	}
+
+	// Access all data from all buckets, so that all memory has to be touched.
+	// If some memory is not mapped anymore (because the bucket was closed due
+	// to the MaxParallelOpenBuckets feature) then we would find out here.
+	dst := make([]Item, 0, N*10)
+	items, err := queue.Pop(N*10, Items(dst))
+	require.NoError(t, err)
+
+	for idx, item := range items {
+		num, err := strconv.Atoi(string(item.Blob))
+		require.NoError(t, err)
+		require.Equal(t, num, idx)
+	}
+
+	require.NoError(t, queue.Close())
+}
+
+func TestAPIShovelMemoryUsage(t *testing.T) {
+	t.Parallel()
+
+	// Still create test dir to make sure it does not error out because of that:
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	const N = 10 // bucket size
+	opts := DefaultOptions()
+	opts.BucketFunc = func(key item.Key) item.Key {
+		return (key / N) * N
+	}
+
+	// This test should fail if this is set to 0!
+	opts.MaxParallelOpenBuckets = 1
+	opts.Copy = false
+
+	srcDir := filepath.Join(dir, "src")
+	srcQueue, err := Open(srcDir, opts)
+	require.NoError(t, err)
+
+	dstDir := filepath.Join(dir, "dst")
+	dstQueue, err := Open(dstDir, opts)
+	require.NoError(t, err)
+
+	// Add a lot of mem to the srcQueue:
+	for idx := 0; idx < N; idx++ {
+		off := idx * N
+		require.NoError(t, srcQueue.Push(testutils.GenItems(off, off+N, 1)))
+
+		// also create the same buckets for dest queue, so that we do not take
+		// the fast path that do not involve any buckets access.
+		require.NoError(t, dstQueue.Push(testutils.GenItems(off, off+1, 1)))
+	}
+
+	refFds := openfds(t)
+	refRss := rssBytes(t)
+
+	count, err := Shovel(srcQueue, dstQueue)
+	require.NoError(t, err)
+	require.Equal(t, N*N, count)
+
+	nowFds := openfds(t)
+	nowRss := rssBytes(t)
+
+	// Allow some fds to be extra:
+	require.LessOrEqual(t, nowFds, refFds+1)
+
+	// RSS memory usage should have not increased a lot:
+	require.True(t, float64(nowRss) < float64(refRss)*1.5)
+
+	// Just add some extra stuff to the queue since we had an
+	// crash related to a broken queue after shovel:
+	for idx := 0; idx < N; idx++ {
+		off := idx * N
+		require.NoError(t, srcQueue.Push(testutils.GenItems(off, off+N, 1)))
+
+		// also create the same buckets for dest queue, so that we do not take
+		// the fast path that do not involve any buckets access.
+		require.NoError(t, dstQueue.Push(testutils.GenItems(off, off+1, 1)))
+	}
+
+	require.NoError(t, srcQueue.Close())
+	require.NoError(t, dstQueue.Close())
+}

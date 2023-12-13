@@ -78,6 +78,12 @@ type Options struct {
 	// If you tend to access your data with rather random keys, you might want
 	// to increase this number, depending on how much resources you have.
 	//
+	// This is currently only applies to write operations (i.e. Push() and so on),
+	// not for read operations like Pop() (as memory needs to stay intact when
+	// reading from several buckets). If you have situations where you do read-only
+	// operations for some time you should throw in a CloseUnused() call from time
+	// to time to make sure memory gets cleaned up.
+	//
 	// If this number is <= 0, then this feature is disabled, which is not
 	// recommended.
 	MaxParallelOpenBuckets int
@@ -178,7 +184,7 @@ func (q *Queue) Push(items Items) error {
 	for len(items) > 0 {
 		keyMod := q.opts.BucketFunc(items[0].Key)
 		nextIdx := binsplit(items, keyMod, q.opts.BucketFunc)
-		buck, err := q.buckets.ForKey(keyMod)
+		buck, err := q.buckets.ForKey(keyMod, true)
 		if err != nil {
 			if q.opts.ErrorMode == bucket.ErrorModeAbort {
 				return fmt.Errorf("bucket: for-key: %w", err)
@@ -266,7 +272,7 @@ func (q *Queue) popOp(op int, n int, dst Items, dstQueue *Queue) (Items, error) 
 		case move:
 			// Move() has a slightly different signature, so adapter is needed.
 			fn = func(count int, dst item.Items) (item.Items, int, error) {
-				dstBuck, err := dstQueue.buckets.ForKey(b.Key())
+				dstBuck, err := dstQueue.buckets.ForKey(b.Key(), false)
 				if err != nil {
 					return dst, 0, nil
 				}
@@ -353,6 +359,18 @@ func (q *Queue) Len() int {
 // to persistent storage, even if you configured SyncNone.
 func (q *Queue) Sync() error {
 	return q.buckets.Sync()
+}
+
+// CloseUnused trims down the number of open buckets to `maxBucks`
+// by closing the least recently used buckets first. Closed buckets
+// will be garbage collected and the memory mapping will be released.
+// The bucket can be re-opened again if it is accessed again.
+//
+// NOTE: If the Copy option is not set to true, then this might also
+// unmap any memory returned from read functions like Pop(). You should
+// consider memory floating around as invalid after this call finished.
+func (q *Queue) CloseUnused() error {
+	return q.buckets.CloseUnused(q.opts.MaxParallelOpenBuckets)
 }
 
 // Clear fully deletes the queue contents.
