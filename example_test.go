@@ -7,7 +7,7 @@ import (
 )
 
 func ExampleQueue() {
-	// error handling stripped for brevity:
+	// Error handling stripped for brevity:
 	dir, _ := os.MkdirTemp("", "timeq-example")
 	defer os.RemoveAll(dir)
 
@@ -26,14 +26,16 @@ func ExampleQueue() {
 	_ = queue.Push(pushItems)
 
 	// Retrieve the same items again:
-	popItems, _ := queue.Pop(10, nil)
+	_ = queue.Pop(10, nil, func(popItems Items) error {
+		// Just for example purposes, check if they match:
+		if reflect.DeepEqual(pushItems, popItems) {
+			fmt.Println("They match! :)")
+		} else {
+			fmt.Println("They do not match! :(")
+		}
 
-	// Just for example purposes, check if they match:
-	if reflect.DeepEqual(pushItems, popItems) {
-		fmt.Println("They match! :)")
-	} else {
-		fmt.Println("They do not match! :(")
-	}
+		return nil
+	})
 
 	// Output: They match! :)
 }

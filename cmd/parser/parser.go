@@ -11,6 +11,7 @@ import (
 	"github.com/sahib/timeq"
 	"github.com/sahib/timeq/bucket"
 	"github.com/sahib/timeq/item"
+	"github.com/sahib/timeq/vlog"
 	"github.com/urfave/cli"
 )
 
@@ -146,6 +147,23 @@ func Run(args []string) error {
 					Required: true,
 				},
 			},
+		}, {
+			Name:  "log",
+			Usage: "Utilities for checking value logs",
+			Subcommands: []cli.Command{
+				cli.Command{
+					Name:   "dump",
+					Usage:  "Print all values in the log",
+					Action: handleLogDump,
+					Flags: []cli.Flag{
+						cli.StringFlag{
+							Name:     "p,path",
+							Usage:    "Where the value log is",
+							Required: true,
+						},
+					},
+				},
+			},
 		},
 	}
 
@@ -178,20 +196,22 @@ func handlePush(ctx *cli.Context, q *timeq.Queue) error {
 
 func handlePop(ctx *cli.Context, q *timeq.Queue) error {
 	n := ctx.Int("number")
+	err := q.Pop(n, nil, func(items timeq.Items) error {
+		for _, item := range items {
+			fmt.Println(item)
+		}
 
-	items, err := q.Pop(n, nil)
+		return nil
+	})
+
 	if err != nil {
 		return err
-	}
-
-	for _, item := range items {
-		fmt.Println(item)
 	}
 
 	return nil
 }
 
-func handleLen(ctx *cli.Context, q *timeq.Queue) error {
+func handleLen(_ *cli.Context, q *timeq.Queue) error {
 	fmt.Println(q.Len())
 	return nil
 }
@@ -236,4 +256,20 @@ func handleShovel(ctx *cli.Context, srcQueue *timeq.Queue) error {
 
 	fmt.Printf("moved %d items\n", nShoveled)
 	return dstQueue.Close()
+}
+
+func handleLogDump(ctx *cli.Context) error {
+	log, err := vlog.Open(ctx.String("path"), true)
+	if err != nil {
+		return err
+	}
+
+	var loc = item.Location{Len: 1e9}
+	var it item.Item
+
+	for iter := log.At(loc, true); iter.Next(&it); {
+		fmt.Printf("%v:%s\n", it.Key, it.Blob)
+	}
+
+	return log.Close()
 }

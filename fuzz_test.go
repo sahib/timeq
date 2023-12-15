@@ -37,14 +37,15 @@ func FuzzPushPop(f *testing.F) {
 			exp = append(exp, items...)
 		}
 
-		got, err := queue.Pop(reps*len(items), nil)
-		require.NoError(t, err)
-
 		slices.SortFunc(exp, func(i, j item.Item) int {
 			return int(i.Key - j.Key)
 		})
 
-		require.Equal(t, exp, got)
+		require.NoError(t, queue.Pop(reps*len(items), nil, func(got Items) error {
+			require.Equal(t, exp, got)
+			return nil
+		}))
+
 		require.NoError(t, queue.Close())
 	})
 }

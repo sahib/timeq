@@ -56,7 +56,8 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 
 	defer recoverMmapError(&outErr)
 
-	log, err := vlog.Open(filepath.Join(dir, DataLogName), opts.SyncMode&SyncData > 0)
+	logPath := filepath.Join(dir, DataLogName)
+	log, err := vlog.Open(logPath, opts.SyncMode&SyncData > 0)
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}
@@ -69,16 +70,20 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 		//
 		// Since we have all the keys and offsets there too,
 		// we should be able to recover from that.
-		if err == nil {
-			opts.Logger.Printf("index is empty, but log is not (%s)", idxPath)
-		} else {
-			opts.Logger.Printf("failed to load index %s: %v", idxPath, err)
+
+		var idxErr error
+		idx, idxErr = index.FromVlog(log)
+		if idxErr != nil {
+			// not much we can do for that case:
+			return nil, fmt.Errorf("index load failed & could not regenerate: %w", idxErr)
 		}
 
-		idx, err = index.FromVlog(log)
-		if err != nil {
-			// not much we can do for that case:
-			return nil, fmt.Errorf("index load failed & could not regenerate: %w", err)
+		if idx.Len() > 0 {
+			if err == nil {
+				opts.Logger.Printf("index is empty, but log is not (%s)", idxPath)
+			} else {
+				opts.Logger.Printf("failed to load index %s: %v", idxPath, err)
+			}
 		}
 
 		if err := os.Remove(idxPath); err != nil {
@@ -92,7 +97,9 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 			return nil, fmt.Errorf("index: write during recover did not work")
 		}
 
-		opts.Logger.Printf("recovered index with %d entries", idx.Len())
+		if idx.Len() > 0 {
+			opts.Logger.Printf("recovered index with %d entries", idx.Len())
+		}
 	}
 
 	idxLog, err := index.NewWriter(idxPath, opts.SyncMode&SyncIndex > 0)
@@ -186,15 +193,6 @@ func (b *Bucket) addIter(batchIters *vlog.Iters, idxIter *index.Iter) (bool, err
 	return !idxIter.Next(), nil
 }
 
-// maybeCopy copies the items if user asked for it in the config.
-func (b *Bucket) maybeCopy(items item.Items) item.Items {
-	if b.opts.Copy {
-		return items.Copy()
-	}
-
-	return items
-}
-
 func (b *Bucket) Pop(n int, dst item.Items) (item.Items, int, error) {
 	if n <= 0 {
 		// technically that's a valid use case.
@@ -208,16 +206,16 @@ func (b *Bucket) Pop(n int, dst item.Items) (item.Items, int, error) {
 
 	iters, items, npopped, err := b.peek(n, dst)
 	if err != nil {
-		return b.maybeCopy(items), npopped, err
+		return items, npopped, err
 	}
 
 	if iters != nil {
 		if err := b.popSync(iters); err != nil {
-			return b.maybeCopy(items), npopped, err
+			return items, npopped, err
 		}
 	}
 
-	return b.maybeCopy(items), npopped, nil
+	return items, npopped, nil
 }
 
 func (b *Bucket) Peek(n int, dst item.Items) (item.Items, int, error) {
@@ -231,7 +229,7 @@ func (b *Bucket) Peek(n int, dst item.Items) (item.Items, int, error) {
 	b.lastAccess = time.Now()
 
 	_, items, npopped, err := b.peek(n, dst)
-	return b.maybeCopy(items), npopped, err
+	return items, npopped, err
 }
 
 // Move moves data between two buckets in a safer way. In case of
@@ -251,16 +249,16 @@ func (b *Bucket) Move(n int, dst item.Items, dstBuck *Bucket) (item.Items, int, 
 
 	iters, items, npopped, err := b.peek(n, dst)
 	if err != nil {
-		return b.maybeCopy(items), npopped, err
+		return items, npopped, err
 	}
 
 	if dstBuck != nil {
 		if err := dstBuck.Push(items[len(dst):]); err != nil {
-			return b.maybeCopy(items), npopped, err
+			return items, npopped, err
 		}
 	}
 
-	return b.maybeCopy(items), npopped, b.popSync(iters)
+	return items, npopped, b.popSync(iters)
 }
 
 // peek reads from the bucket, but does not mark the elements as deleted yet.

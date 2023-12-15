@@ -78,14 +78,6 @@ type Options struct {
 	// ErrorMode defines how non-critical errors are handled.
 	// See the individual enum values for more info.
 	ErrorMode ErrorMode
-
-	// Copy will make Pop(), Move(), Peek() ... return a copy
-	// of the items instead of returning slices to the raw memory provided
-	// to by mmap(). This is less efficient, but makes sure that memory does
-	// not get invalidated by the next call to Pop() or similar calls.
-	//
-	// Default is no copy.
-	Copy bool
 }
 
 // DefaultOptions returns sane options you can start with

@@ -228,19 +228,19 @@ func (l *Log) readItemAt(off item.Off, it *item.Item) (err error) {
 	}
 
 	// parse header:
-	len := binary.BigEndian.Uint32(l.mmap[off+0:])
+	siz := binary.BigEndian.Uint32(l.mmap[off+0:])
 	key := binary.BigEndian.Uint64(l.mmap[off+4:])
 
-	if len > 64*1024*1024 {
+	if siz > 64*1024*1024 {
 		// fail-safe if the size field is corrupt:
-		return fmt.Errorf("log: allocation too big for one value: %d", len)
+		return fmt.Errorf("log: allocation too big for one value: %d", siz)
 	}
 
-	if int64(off)+item.HeaderSize+int64(len)+item.TrailerSize > l.size {
+	if int64(off)+item.HeaderSize+int64(siz)+item.TrailerSize > l.size {
 		return fmt.Errorf(
 			"log: bad offset: %d+%d >= %d (payload too big)",
 			off,
-			len,
+			siz,
 			l.size,
 		)
 	}
@@ -250,12 +250,12 @@ func (l *Log) readItemAt(off item.Off, it *item.Item) (err error) {
 	// overwrite, unmap or resize the underlying memory at a later point.
 	// Caller can use item.Copy() or items.Copy() to obtain a copy.
 	blobOff := off + item.HeaderSize
-	trailerOff := blobOff + item.Off(len)
+	trailerOff := blobOff + item.Off(siz)
 
 	// check that the trailer was correctly written.
 	// (not a checksum, but could be made to one in future versions)
 	if l.mmap[trailerOff] != 0xFF && l.mmap[trailerOff+1] != 0xFF {
-		return fmt.Errorf("log: missing trailer: %d", off)
+		return fmt.Errorf("log: %s: missing trailer: %d", l.path, off)
 	}
 
 	*it = item.Item{

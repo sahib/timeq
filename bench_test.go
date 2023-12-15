@@ -47,6 +47,7 @@ func benchmarkPushPopWithSyncMode(b *testing.B, benchmarkPush bool, syncMode buc
 		if benchmarkPush {
 			b.StartTimer()
 		}
+
 		require.NoError(b, queue.Push(items))
 		if benchmarkPush {
 			b.StopTimer()
@@ -56,7 +57,11 @@ func benchmarkPushPopWithSyncMode(b *testing.B, benchmarkPush bool, syncMode buc
 			b.StartTimer()
 		}
 		dstItems = dstItems[:0]
-		_, err := queue.Pop(len(items), dstItems[:0])
+
+		err = queue.Pop(len(items), dstItems[:0], func(items Items) error {
+			return nil
+		})
+
 		if !benchmarkPush {
 			b.StopTimer()
 		}

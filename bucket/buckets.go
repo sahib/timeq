@@ -15,15 +15,15 @@ import (
 )
 
 type Buckets struct {
-	mu                 sync.Mutex
-	dir                string
-	tree               btree.Map[item.Key, *Bucket]
-	trailers           map[item.Key]index.Trailer
-	opts               Options
-	maxParallelBuckets int
+	mu                     sync.Mutex
+	dir                    string
+	tree                   btree.Map[item.Key, *Bucket]
+	trailers               map[item.Key]index.Trailer
+	opts                   Options
+	maxParallelOpenBuckets int
 }
 
-func LoadAll(dir string, maxParallelBuckets int, opts Options) (*Buckets, error) {
+func LoadAll(dir string, maxParallelOpenBuckets int, opts Options) (*Buckets, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("mkdir: %w", err)
 	}
@@ -86,11 +86,11 @@ func LoadAll(dir string, maxParallelBuckets int, opts Options) (*Buckets, error)
 	}
 
 	return &Buckets{
-		dir:                dir,
-		tree:               tree,
-		opts:               opts,
-		trailers:           trailers,
-		maxParallelBuckets: maxParallelBuckets,
+		dir:                    dir,
+		tree:                   tree,
+		opts:                   opts,
+		trailers:               trailers,
+		maxParallelOpenBuckets: maxParallelOpenBuckets,
 	}, nil
 }
 
@@ -122,18 +122,23 @@ func (bs *Buckets) buckPath(key item.Key) string {
 // ForKey returns a bucket for the specified key and creates if not there yet.
 // `key` must be the lowest key that is stored in this bucket. You cannot just
 // use a key that is somewhere in the bucket.
-func (bs *Buckets) ForKey(key item.Key, closeUnused bool) (*Bucket, error) {
+func (bs *Buckets) ForKey(key item.Key) (*Bucket, error) {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 
-	return bs.forKey(key, closeUnused)
+	return bs.forKey(key)
 }
 
-func (bs *Buckets) forKey(key item.Key, closeUnused bool) (*Bucket, error) {
+func (bs *Buckets) forKey(key item.Key) (*Bucket, error) {
 	buck, _ := bs.tree.Get(key)
 	if buck != nil {
 		// fast path:
 		return buck, nil
+	}
+
+	// close before, so we don't temporarily get over the maximum.
+	if err := bs.closeUnused(bs.maxParallelOpenBuckets); err != nil {
+		return nil, err
 	}
 
 	var err error
@@ -143,10 +148,6 @@ func (bs *Buckets) forKey(key item.Key, closeUnused bool) (*Bucket, error) {
 	}
 
 	bs.tree.Set(key, buck)
-	if closeUnused {
-		return buck, bs.closeUnused(bs.maxParallelBuckets)
-	}
-
 	return buck, nil
 }
 
@@ -163,7 +164,7 @@ func (bs *Buckets) delete(key item.Key) error {
 		return fmt.Errorf("no bucket with key %v", key)
 	}
 
-	bs.trailers[key] = index.Trailer{}
+	delete(bs.trailers, key)
 
 	var err error
 	if buck != nil {
@@ -173,10 +174,12 @@ func (bs *Buckets) delete(key item.Key) error {
 	}
 
 	bs.tree.Delete(key)
-	return errors.Join(
+	x := errors.Join(
 		err,
 		os.RemoveAll(bs.buckPath(key)),
 	)
+
+	return x
 }
 
 type IterMode int
@@ -207,15 +210,28 @@ func (bs *Buckets) Iter(mode IterMode, fn func(key item.Key, b *Bucket) error) e
 	defer bs.mu.Unlock()
 
 	var err error
-	bs.tree.Scan(func(key item.Key, buck *Bucket) bool {
+
+	// `fn` might call bs.tree.Delete() which will crash
+	// TODO: This is an allocation I would like to optimize, but it's rather
+	// small most of the time, so probably not really worth it.
+	copy := bs.tree.IsoCopy()
+	copy.Scan(func(key item.Key, _ *Bucket) bool {
+		// Fetch from non-copied tree as this is the one that is modified.
+		buck, ok := bs.tree.Get(key)
+		if !ok {
+			// it was deleted already? Skip it.
+			return true
+		}
+
 		if buck == nil {
 			if mode == LoadedOnly {
 				return true
 			}
 
 			if mode == Load {
-				// load the bucket fresh from disk:
-				buck, err = bs.forKey(key, false)
+				// load the bucket fresh from disk.
+				// NOTE: This might unload other buckets!
+				buck, err = bs.forKey(key)
 				if err != nil {
 					return false
 				}
@@ -319,24 +335,19 @@ func (bs *Buckets) Shovel(dstBs *Buckets) (int, error) {
 		// In this case we have to copy the items more intelligently,
 		// since we have to append it to the destination bucket.
 
-		srcBuck, err := bs.forKey(key, true)
+		srcBuck, err := bs.forKey(key)
 		if err != nil {
 			return err
 		}
 
 		// NOTE: This assumes that the destination has the same bucket func.
-		dstBuck, err := dstBs.forKey(key, true)
+		dstBuck, err := dstBs.forKey(key)
 		if err != nil {
 			return err
 		}
 
 		_, ncopied, err := srcBuck.Move(math.MaxInt, buf, dstBuck)
 		ntotalcopied += ncopied
-
-		if err := bs.closeUnused(bs.maxParallelBuckets); err != nil {
-			return err
-		}
-
 		return err
 	})
 
@@ -361,13 +372,6 @@ func (bs *Buckets) nloaded() int {
 	})
 
 	return nloaded
-}
-
-func (bs *Buckets) CloseUnused(maxBucks int) error {
-	bs.mu.Lock()
-	defer bs.mu.Unlock()
-
-	return bs.closeUnused(maxBucks)
 }
 
 func (bs *Buckets) closeUnused(maxBucks int) error {
@@ -424,4 +428,86 @@ func (bs *Buckets) closeUnused(maxBucks int) error {
 	}
 
 	return closeErrs
+}
+
+type ReadOp int
+
+const (
+	ReadOpPeek = 0
+	ReadOpPop  = 1
+	ReadOpMove = 2
+)
+
+type ReadFn func(items item.Items) error
+
+// Read handles all kind of reading operations. It is a low-level function that is not part of the official API.
+func (bs *Buckets) Read(op ReadOp, n int, dst item.Items, fn ReadFn, dstBs *Buckets) error {
+	if n < 0 {
+		// use max value in this case:
+		n = int(^uint(0) >> 1)
+	}
+
+	var count = n
+	return bs.Iter(Load, func(key item.Key, b *Bucket) error {
+		// Choose the right func for the operation:
+		var opFn func(n int, dst item.Items) (item.Items, int, error)
+		switch op {
+		case ReadOpPop:
+			opFn = b.Pop
+		case ReadOpPeek:
+			opFn = b.Peek
+		case ReadOpMove:
+			// Move() has a slightly different signature, so adapter is needed.
+			opFn = func(count int, dst item.Items) (item.Items, int, error) {
+
+				dstBuck, err := dstBs.forKey(b.key)
+				if err != nil {
+					return dst, 0, nil
+				}
+
+				items, count, err := b.Move(count, dst, dstBuck)
+				if err != nil {
+					return items, count, err
+				}
+
+				return items, count, nil
+			}
+		default:
+			// programmer error
+			panic("invalid op")
+		}
+
+		items, nitems, err := opFn(count, dst)
+		if err != nil {
+			if bs.opts.ErrorMode == ErrorModeAbort {
+				return err
+			}
+
+			// try with the next bucket in the hope that it works:
+			bs.opts.Logger.Printf("failed to pop: %v", err)
+			return nil
+		}
+
+		var fnErr error
+		if len(items) > 0 {
+			fnErr = fn(items)
+		}
+
+		if b.Empty() {
+			if err := bs.delete(key); err != nil {
+				return fmt.Errorf("failed to delete bucket: %w", err)
+			}
+		}
+
+		if fnErr != nil {
+			return fnErr
+		}
+
+		count -= nitems
+		if count <= 0 {
+			return IterStop
+		}
+
+		return nil
+	})
 }

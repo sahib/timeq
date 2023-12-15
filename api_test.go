@@ -2,6 +2,7 @@ package timeq
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,7 +43,10 @@ func TestAPIPushPopEmpty(t *testing.T) {
 	require.NoError(t, queue.Close())
 
 	require.NoError(t, queue.Push(nil))
-	_, err = queue.Pop(100, nil)
+	err = queue.Pop(100, nil, func(items Items) error {
+		return errors.New("I was called!")
+	})
+
 	require.NoError(t, err)
 }
 
@@ -81,11 +85,15 @@ func TestAPIPushPopSeveralBuckets(t *testing.T) {
 	require.Equal(t, 20, queue.Len())
 
 	// Pop them in one go:
-	items, err := queue.Pop(-1, nil)
-	require.NoError(t, err)
+	got := Items{}
+	require.NoError(t, queue.Pop(-1, nil, func(items Items) error {
+		got = append(got, items.Copy()...)
+		return nil
+	}))
+
 	require.Equal(t, 0, queue.Len())
-	require.Len(t, items, 20)
-	require.Equal(t, append(push1, push2...), items)
+	require.Len(t, got, 20)
+	require.Equal(t, append(push1, push2...), got)
 
 	// Write the queue to disk:
 	require.NoError(t, queue.Sync())
@@ -95,9 +103,10 @@ func TestAPIPushPopSeveralBuckets(t *testing.T) {
 	reopened, err := Open(dir, opts)
 	require.NoError(t, err)
 	require.Equal(t, 0, reopened.Len())
-	items, err = reopened.Pop(-1, nil)
-	require.NoError(t, err)
-	require.Len(t, items, 0)
+	require.NoError(t, reopened.Pop(-1, nil, func(items Items) error {
+		require.Empty(t, items)
+		return nil
+	}))
 }
 
 func TestAPIBinsplit(t *testing.T) {
@@ -157,9 +166,10 @@ func TestAPIShovelFastPath(t *testing.T) {
 	require.Equal(t, 0, q1.Len())
 	require.Equal(t, len(exp), q2.Len())
 
-	got, err := q2.Pop(len(exp), nil)
-	require.NoError(t, err)
-	require.Equal(t, exp, got)
+	require.NoError(t, q2.Pop(len(exp), nil, func(got Items) error {
+		require.Equal(t, exp, got)
+		return nil
+	}))
 
 	require.NoError(t, q1.Close())
 	require.NoError(t, q2.Close())
@@ -220,9 +230,10 @@ func testAPIShovelSlowPath(t *testing.T, reopen bool) {
 	}
 
 	exp := append(q1Push, q2Push...)
-	got, err := q2.Pop(len(q1Push)+len(q2Push), nil)
-	require.NoError(t, err)
-	require.Equal(t, exp, got)
+	require.NoError(t, q2.Pop(len(q1Push)+len(q2Push), nil, func(got Items) error {
+		require.Equal(t, exp, got)
+		return nil
+	}))
 
 	require.NoError(t, q1.Close())
 	require.NoError(t, q2.Close())
@@ -285,14 +296,24 @@ func TestAPIPeek(t *testing.T) {
 
 	exp := testutils.GenItems(0, 200, 1)
 	require.NoError(t, queue.Push(exp))
-	got, err := queue.Peek(len(exp), nil)
-	require.NoError(t, err)
+
+	got := Items{}
+	require.NoError(t, queue.Peek(len(exp), nil, func(items Items) error {
+		got = append(got, items.Copy()...)
+		return nil
+	}))
+	require.Equal(t, len(exp), len(got))
 	require.Equal(t, exp, got)
 
-	got, err = queue.Pop(len(exp), nil)
-	require.NoError(t, err)
-	require.Equal(t, exp, got)
+	// Check that Peek() really did not delete anything:
+	got = got[:0]
+	require.NoError(t, queue.Pop(len(exp), nil, func(items Items) error {
+		got = append(got, items.Copy()...)
+		return nil
+	}))
 
+	require.Equal(t, len(exp), len(got))
+	require.Equal(t, exp, got)
 	require.NoError(t, queue.Close())
 }
 
@@ -341,15 +362,23 @@ func TestAPIMove(t *testing.T) {
 	require.Equal(t, len(exp), srcQueue.Len())
 	require.Equal(t, 0, dstQueue.Len())
 
-	got, err := srcQueue.Move(len(exp), nil, dstQueue)
-	require.NoError(t, err)
+	got := Items{}
+	require.NoError(t, srcQueue.Move(len(exp), nil, dstQueue, func(items Items) error {
+		got = append(got, items.Copy()...)
+		return nil
+	}))
+
 	require.Equal(t, exp, got)
 
 	require.Equal(t, 0, srcQueue.Len())
 	require.Equal(t, len(exp), dstQueue.Len())
 
-	gotMoved, err := dstQueue.Pop(len(exp), nil)
-	require.NoError(t, err)
+	gotMoved := Items{}
+	require.NoError(t, dstQueue.Pop(len(exp), nil, func(items Items) error {
+		gotMoved = append(gotMoved, items.Copy()...)
+		return nil
+	}))
+
 	require.Equal(t, exp, gotMoved)
 
 	require.Equal(t, 0, srcQueue.Len())
@@ -455,14 +484,21 @@ func testAPIErrorModePop(t *testing.T, mode bucket.ErrorMode) {
 		os.Truncate(filepath.Join(dir, Key(0).String(), bucket.DataLogName), 0),
 	)
 
-	items, popErr := queue.Pop(100, nil)
+	popErr := queue.Pop(100, nil, func(items Items) error {
+		if mode == bucket.ErrorModeContinue {
+			require.NotEmpty(t, logger.String())
+			require.NotEmpty(t, items)
+		} else {
+			require.Empty(t, items)
+		}
+
+		return nil
+	})
+
 	if mode == bucket.ErrorModeContinue {
 		require.NoError(t, popErr)
-		require.NotEmpty(t, logger.String())
-		require.NotEmpty(t, items)
 	} else {
 		require.Error(t, popErr)
-		require.Empty(t, items)
 	}
 
 	require.NoError(t, queue.Close())
@@ -669,24 +705,27 @@ func TestAPIFixedSizeBucketFunc(t *testing.T) {
 }
 
 func TestAPIDoNotCrashOnMultiBucketPop(t *testing.T) {
-	t.Parallel()
-
 	// Still create test dir to make sure it does not error out because of that:
 	dir, err := os.MkdirTemp("", "timeq-apitest")
 	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	// defer os.RemoveAll(dir)
 
-	const N = 1000 // bucket size
+	const N = 3
 	opts := DefaultOptions()
 	opts.BucketFunc = func(key item.Key) item.Key {
 		return (key / N) * N
 	}
 
+	// TODO: run this test with several settings here.
 	// This test should fail if this is set to 0!
 	opts.MaxParallelOpenBuckets = 1
-	opts.Copy = false
 
-	queue, err := Open(dir, opts)
+	srcDir := filepath.Join(dir, "src")
+	queue, err := Open(srcDir, opts)
+	require.NoError(t, err)
+
+	dstDir := filepath.Join(dir, "dst")
+	dstQueue, err := Open(dstDir, opts)
 	require.NoError(t, err)
 
 	// Add several buckets to the queue:
@@ -698,22 +737,30 @@ func TestAPIDoNotCrashOnMultiBucketPop(t *testing.T) {
 	// Access all data from all buckets, so that all memory has to be touched.
 	// If some memory is not mapped anymore (because the bucket was closed due
 	// to the MaxParallelOpenBuckets feature) then we would find out here.
+	refFds := openfds(t)
+	refRss := rssBytes(t)
+
 	dst := make([]Item, 0, N*10)
-	items, err := queue.Pop(N*10, Items(dst))
-	require.NoError(t, err)
+	count := 0
+	require.NoError(t, queue.Move(N*N, dst, dstQueue, func(items Items) error {
+		for _, item := range items {
+			num, err := strconv.Atoi(string(item.Blob))
+			require.NoError(t, err)
+			require.Equal(t, num, count)
+			count++
+		}
+		return nil
+	}))
 
-	for idx, item := range items {
-		num, err := strconv.Atoi(string(item.Blob))
-		require.NoError(t, err)
-		require.Equal(t, num, idx)
-	}
-
+	gotFds := openfds(t)
+	gotRss := rssBytes(t)
+	require.Equal(t, refFds, gotFds)
+	require.True(t, float64(refRss)*1.2 > float64(gotRss))
 	require.NoError(t, queue.Close())
+	require.NoError(t, dstQueue.Close())
 }
 
 func TestAPIShovelMemoryUsage(t *testing.T) {
-	t.Parallel()
-
 	// Still create test dir to make sure it does not error out because of that:
 	dir, err := os.MkdirTemp("", "timeq-apitest")
 	require.NoError(t, err)
@@ -727,7 +774,6 @@ func TestAPIShovelMemoryUsage(t *testing.T) {
 
 	// This test should fail if this is set to 0!
 	opts.MaxParallelOpenBuckets = 1
-	opts.Copy = false
 
 	srcDir := filepath.Join(dir, "src")
 	srcQueue, err := Open(srcDir, opts)

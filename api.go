@@ -19,6 +19,9 @@ type Items = item.Items
 // Lower keys will be popped first.
 type Key = item.Key
 
+// ReadFn is the type for functions passed to Pop/Move/Peek
+type ReadFn = bucket.ReadFn
+
 // DefaultBucketFunc assumes that `key` is a nanosecond unix timestamps
 // and divides data (roughly) in 2m minute buckets.
 var DefaultBucketFunc = ShiftBucketFunc(37)
@@ -184,7 +187,7 @@ func (q *Queue) Push(items Items) error {
 	for len(items) > 0 {
 		keyMod := q.opts.BucketFunc(items[0].Key)
 		nextIdx := binsplit(items, keyMod, q.opts.BucketFunc)
-		buck, err := q.buckets.ForKey(keyMod, true)
+		buck, err := q.buckets.ForKey(keyMod)
 		if err != nil {
 			if q.opts.ErrorMode == bucket.ErrorModeAbort {
 				return fmt.Errorf("bucket: for-key: %w", err)
@@ -207,12 +210,6 @@ func (q *Queue) Push(items Items) error {
 	return nil
 }
 
-const (
-	peek = 0
-	pop  = 1
-	move = 2
-)
-
 // Pop fetches up to `n` items from the queue. It will only return
 // less items if the queue does not hold more items. If an error
 // occurred no items are returned. If n < 0 then as many items as possible
@@ -228,87 +225,30 @@ const (
 // DeleteLowerThan() and Shovel() will close or move those mappings,
 // causing segfaults when still accessing them. If you need the items
 // for later, then use item.Copy() before your next call.
-func (q *Queue) Pop(n int, dst Items) (Items, error) {
-	return q.popOp(pop, n, dst, nil)
+func (q *Queue) Pop(n int, dst Items, fn ReadFn) error {
+	return q.buckets.Read(bucket.ReadOpPop, n, dst, fn, nil)
 }
 
 // Peek works like Pop, but does not delete the items in the queue.
 // Note that calling Peek() twice will yield the same result.
-func (q *Queue) Peek(n int, dst Items) (Items, error) {
-	return q.popOp(peek, n, dst, nil)
+func (q *Queue) Peek(n int, dst Items, fn ReadFn) error {
+	return q.buckets.Read(bucket.ReadOpPeek, n, dst, fn, nil)
 }
 
 // Move works like Pop, but does push the popped items to `dstQueue`.
 // This is its own operation since the data is only deleted from `q`
 // when the push was synced on `dstQueue`. This is safer than using
 // the Push/Pop itself.
-func (q *Queue) Move(n int, dst Items, dstQueue *Queue) (Items, error) {
-	items, err := q.popOp(move, n, dst, dstQueue)
-	if err != nil {
-		return items, err
-	}
-
-	return items, nil
-}
-
-func (q *Queue) popOp(op int, n int, dst Items, dstQueue *Queue) (Items, error) {
-	if n < 0 {
-		// use max value in this case:
-		n = int(^uint(0) >> 1)
-	}
-
-	// NOTE: We can't check here if a bucket is empty and delete it
-	// afterwards. Otherwise the mmap would be closed and accessing
-	// items we returned can cause a segfault immediately.
-
-	var count = n
-	return dst, q.buckets.Iter(bucket.Load, func(_ item.Key, b *bucket.Bucket) error {
-		var fn func(n int, dst item.Items) (item.Items, int, error)
-		switch op {
-		case pop:
-			fn = b.Pop
-		case peek:
-			fn = b.Peek
-		case move:
-			// Move() has a slightly different signature, so adapter is needed.
-			fn = func(count int, dst item.Items) (item.Items, int, error) {
-				dstBuck, err := dstQueue.buckets.ForKey(b.Key(), false)
-				if err != nil {
-					return dst, 0, nil
-				}
-
-				return b.Move(count, dst, dstBuck)
-			}
-		default:
-			// programmer error
-			panic("invalid op")
-		}
-
-		newDst, nitems, err := fn(count, dst)
-		if err != nil {
-			if q.opts.ErrorMode == bucket.ErrorModeAbort {
-				return err
-			}
-
-			// try with the next bucket in the hope that it works:
-			q.opts.Logger.Printf("failed to pop: %v", err)
-			return nil
-		}
-
-		dst = newDst
-		count -= nitems
-		if count <= 0 {
-			return bucket.IterStop
-		}
-
-		return nil
-	})
+func (q *Queue) Move(n int, dst Items, dstQueue *Queue, fn ReadFn) error {
+	return q.buckets.Read(bucket.ReadOpMove, n, dst, fn, dstQueue.buckets)
 }
 
 // DeleteLowerThan deletes all items lower than `key`.
 func (q *Queue) DeleteLowerThan(key Key) (int, error) {
 	var numDeleted int
 	var deletableBucks []*bucket.Bucket
+
+	// TODO: Move that to buckets.go for consistency reasons?
 
 	err := q.buckets.Iter(bucket.Load, func(bucketKey item.Key, buck *bucket.Bucket) error {
 		if bucketKey >= key {
@@ -359,18 +299,6 @@ func (q *Queue) Len() int {
 // to persistent storage, even if you configured SyncNone.
 func (q *Queue) Sync() error {
 	return q.buckets.Sync()
-}
-
-// CloseUnused trims down the number of open buckets to `maxBucks`
-// by closing the least recently used buckets first. Closed buckets
-// will be garbage collected and the memory mapping will be released.
-// The bucket can be re-opened again if it is accessed again.
-//
-// NOTE: If the Copy option is not set to true, then this might also
-// unmap any memory returned from read functions like Pop(). You should
-// consider memory floating around as invalid after this call finished.
-func (q *Queue) CloseUnused() error {
-	return q.buckets.CloseUnused(q.opts.MaxParallelOpenBuckets)
 }
 
 // Clear fully deletes the queue contents.
