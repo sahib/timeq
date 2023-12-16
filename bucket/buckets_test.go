@@ -71,11 +71,11 @@ func TestBucketsIter(t *testing.T) {
 
 	// load bucket 80 early to check if iter can handle
 	// already loaded buckets too.
-	_, err = bs.ForKey(80)
+	_, err = bs.forKey(80)
 	require.NoError(t, err)
 
 	got := []item.Key{}
-	require.NoError(t, bs.Iter(Load, func(key item.Key, b *Bucket) error {
+	require.NoError(t, bs.iter(Load, func(key item.Key, b *Bucket) error {
 		got = append(got, b.Key())
 		require.Equal(t, key, b.Key())
 		return nil
@@ -97,18 +97,18 @@ func TestBucketsForKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// open freshly:
-	b1, err := bs.ForKey(32)
+	b1, err := bs.forKey(32)
 	require.NoError(t, err)
 	require.Equal(t, item.Key(32), b1.Key())
 
 	// open again, must be the same memory:
-	b2, err := bs.ForKey(32)
+	b2, err := bs.forKey(32)
 	require.NoError(t, err)
 	require.Equal(t, item.Key(32), b2.Key())
 	require.Equal(t, b1, b2)
 
 	// existing bucket should load fine:
-	b3, err := bs.ForKey(33)
+	b3, err := bs.forKey(33)
 	require.NoError(t, err)
 	require.Equal(t, item.Key(33), b3.Key())
 	require.Equal(t, 10, b3.Len())
@@ -117,7 +117,7 @@ func TestBucketsForKey(t *testing.T) {
 
 	// open again, must be the same memory:
 
-	b3c, err := bs.ForKey(33)
+	b3c, err := bs.forKey(33)
 	require.NoError(t, err)
 	require.Equal(t, item.Key(33), b3c.Key())
 	require.Equal(t, 0, b3c.Len())
@@ -168,7 +168,7 @@ func TestBucketsDelete(t *testing.T) {
 	require.Error(t, bs.Delete(50))
 
 	// Create bucket and delete again:
-	_, err = bs.ForKey(50)
+	_, err = bs.forKey(50)
 	require.NoError(t, err)
 	require.NoError(t, bs.Delete(50))
 	require.Error(t, bs.Delete(50))
@@ -192,4 +192,33 @@ func TestBucketsNotEmptyDir(t *testing.T) {
 	// but we should not do this automatically.
 	_, err = LoadAll(dir, 1, DefaultOptions())
 	require.Error(t, err)
+}
+
+func TestAPIBinsplit(t *testing.T) {
+	t.Parallel()
+
+	idFunc := func(k item.Key) item.Key { return k }
+
+	items := item.Items{
+		item.Item{Key: 0},
+		item.Item{Key: 0},
+		item.Item{Key: 0},
+		item.Item{Key: 1},
+		item.Item{Key: 1},
+		item.Item{Key: 1},
+	}
+
+	require.Equal(t, 3, binsplit(items, 0, idFunc))
+	require.Equal(t, 6, binsplit(items, 1, idFunc))
+	require.Equal(t, 0, binsplit(item.Items{}, 0, idFunc))
+}
+
+func TestAPIBinsplitSeq(t *testing.T) {
+	t.Parallel()
+
+	idFunc := func(k item.Key) item.Key { return k }
+	items := testutils.GenItems(0, 10, 1)
+	for idx := 0; idx < len(items); idx++ {
+		require.Equal(t, 1, binsplit(items[idx:], item.Key(idx), idFunc))
+	}
 }
