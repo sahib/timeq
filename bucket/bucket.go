@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
-	"sync"
-	"time"
 
 	"github.com/sahib/timeq/index"
 	"github.com/sahib/timeq/item"
@@ -20,14 +18,12 @@ const (
 )
 
 type Bucket struct {
-	mu         sync.Mutex
-	dir        string
-	key        item.Key
-	log        *vlog.Log
-	idxLog     *index.Writer
-	idx        *index.Index
-	opts       Options
-	lastAccess time.Time
+	dir    string
+	key    item.Key
+	log    *vlog.Log
+	idxLog *index.Writer
+	idx    *index.Index
+	opts   Options
 }
 
 func Open(dir string, opts Options) (buck *Bucket, outErr error) {
@@ -113,27 +109,20 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 	}
 
 	return &Bucket{
-		dir:        dir,
-		key:        item.Key(key),
-		log:        log,
-		idx:        idx,
-		idxLog:     idxLog,
-		opts:       opts,
-		lastAccess: time.Now(),
+		dir:    dir,
+		key:    item.Key(key),
+		log:    log,
+		idx:    idx,
+		idxLog: idxLog,
+		opts:   opts,
 	}, nil
 }
 
 func (b *Bucket) Sync(force bool) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	return errors.Join(b.log.Sync(force), b.idxLog.Sync(force))
 }
 
 func (b *Bucket) Close() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	return errors.Join(
 		b.log.Sync(true),
 		b.idxLog.Sync(true),
@@ -156,11 +145,6 @@ func (b *Bucket) Push(items item.Items) (outErr error) {
 	}
 
 	defer recoverMmapError(&outErr)
-
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	b.lastAccess = time.Now()
 
 	loc, err := b.log.Push(items)
 	if err != nil {
@@ -199,11 +183,6 @@ func (b *Bucket) Pop(n int, dst item.Items) (item.Items, int, error) {
 		return dst, 0, nil
 	}
 
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	b.lastAccess = time.Now()
-
 	iters, items, npopped, err := b.peek(n, dst)
 	if err != nil {
 		return items, npopped, err
@@ -223,11 +202,6 @@ func (b *Bucket) Peek(n int, dst item.Items) (item.Items, int, error) {
 		return dst, 0, nil
 	}
 
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	b.lastAccess = time.Now()
-
 	_, items, npopped, err := b.peek(n, dst)
 	return items, npopped, err
 }
@@ -241,11 +215,6 @@ func (b *Bucket) Move(n int, dst item.Items, dstBuck *Bucket) (item.Items, int, 
 		// technically that's a valid usecase.
 		return dst, 0, nil
 	}
-
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	b.lastAccess = time.Now()
 
 	iters, items, npopped, err := b.peek(n, dst)
 	if err != nil {
@@ -366,9 +335,6 @@ func (b *Bucket) popSync(batchIters *vlog.Iters) error {
 func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
 	defer recoverMmapError(&outErr)
 
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	if b.key >= key {
 		// this bucket is safe from the clear.
 		return 0, nil
@@ -440,23 +406,14 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
 }
 
 func (b *Bucket) Empty() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	return b.idx.Len() == 0
 }
 
 func (b *Bucket) Key() item.Key {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	return b.key
 }
 
 func (b *Bucket) Len() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	size := 0
 	iter := b.idx.Iter()
 	for iter.Next() {
@@ -464,11 +421,4 @@ func (b *Bucket) Len() int {
 	}
 
 	return size
-}
-
-func (b *Bucket) LastAccess() time.Time {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	return b.lastAccess
 }

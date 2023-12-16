@@ -159,6 +159,29 @@ There are also some other reasons:
 * Buckets cannot grow over 4GB due to the offsets being 32-bit values.
 * On ``Shovel()`` we can cheaply move buckets if they do not exist in the destination.
 
+### How do I choose the right size of my buckets?
+
+It depends on a few things:
+
+- How much memory do you have at hand?
+- In the worst case, how many items would you push to a single bucket?
+- How big is each item?
+- How many buckets should be open at the same time?
+
+As `timeq` uses `mmap(2)` internally, only the pages that were accessed are
+actually mapped to physical memory. However when pushing a lot of data this is
+mapped to physical memory as all accessed pages of a bucket stay open (which is
+good if you Pop immediately after). So you should be fine if this evaluates to true:
+
+`BytesPerItem * ItemsPerBucketInWorstCase * MaxOpenParallelBuckets < BytesMemoryAvailable - WiggleRoom`.
+
+You can lower the number of open buckets with `MaxOpenParallelBuckets`.
+
+Keep in mind that `timeq` is fast and can be memory-efficient if used correctly,
+but it's not a magic device. In future I might introduce a feature that does not
+keep the full bucket mapped if it's only being pushed to. The return-on-invest
+for such an optimization would be rather small though.
+
 ### Can I store more than one value per key?
 
 Yes, no problem. The index may store more than one batch per key. There is a
@@ -197,15 +220,7 @@ bunch of benchmarks and fuzzing tests.
 
 ### Is `timeq` safely usable from several go-routines?
 
-In general, yes. Be aware however that `timeq` by default directly returns the
-contents of the data log mapped by `mmap()`. This means that memory might get
-invalid after the next call to `Push()`, `Pop()` or other functions. Special
-care must be taken therefore to not call any other method until the memory was
-processed (copied, compressed, whatever) by your application.
-
-If you get a panic while accessing your memory, this is most likely the reason.
-You can use the `Copy` option to let `timeq` copy the data for you, if you can
-tolerate the performance penalty introduced by those allocations.
+Yes. There is no real speed benefit from doing so though currently.
 
 ## License
 

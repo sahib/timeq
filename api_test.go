@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestKeyTrunc(t *testing.T) {
+func TestAPIKeyTrunc(t *testing.T) {
 	t.Parallel()
 
 	stamp := time.Date(2023, 1, 1, 12, 13, 14, 15, time.UTC)
@@ -67,11 +67,9 @@ func TestAPIPushPopSeveralBuckets(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	// Open queue with a bucket size of 10 items:
-	opts := Options{
-		Options: bucket.DefaultOptions(),
-		BucketFunc: func(key Key) Key {
-			return (key / 10) * 10
-		},
+	opts := DefaultOptions()
+	opts.BucketFunc = func(key Key) Key {
+		return (key / 10) * 10
 	}
 
 	queue, err := Open(dir, opts)
@@ -107,35 +105,6 @@ func TestAPIPushPopSeveralBuckets(t *testing.T) {
 		require.Empty(t, items)
 		return nil
 	}))
-}
-
-func TestAPIBinsplit(t *testing.T) {
-	t.Parallel()
-
-	idFunc := func(k Key) Key { return k }
-
-	items := Items{
-		Item{Key: 0},
-		Item{Key: 0},
-		Item{Key: 0},
-		Item{Key: 1},
-		Item{Key: 1},
-		Item{Key: 1},
-	}
-
-	require.Equal(t, 3, binsplit(items, 0, idFunc))
-	require.Equal(t, 6, binsplit(items, 1, idFunc))
-	require.Equal(t, 0, binsplit(Items{}, 0, idFunc))
-}
-
-func TestAPIBinsplitSeq(t *testing.T) {
-	t.Parallel()
-
-	idFunc := func(k Key) Key { return k }
-	items := testutils.GenItems(0, 10, 1)
-	for idx := 0; idx < len(items); idx++ {
-		require.Equal(t, 1, binsplit(items[idx:], Key(idx), idFunc))
-	}
 }
 
 func TestAPIShovelFastPath(t *testing.T) {
@@ -419,10 +388,8 @@ func testAPIErrorModePush(t *testing.T, mode bucket.ErrorMode) {
 
 	logger := &LogBuffer{}
 	opts := Options{
-		Options: bucket.Options{
-			ErrorMode: mode,
-			Logger:    logger,
-		},
+		ErrorMode: mode,
+		Logger:    logger,
 		BucketFunc: func(key Key) Key {
 			return (key / 10) * 10
 		},
@@ -464,10 +431,8 @@ func testAPIErrorModePop(t *testing.T, mode bucket.ErrorMode) {
 
 	logger := &LogBuffer{}
 	opts := Options{
-		Options: bucket.Options{
-			ErrorMode: mode,
-			Logger:    logger,
-		},
+		ErrorMode: mode,
+		Logger:    logger,
 		BucketFunc: func(key Key) Key {
 			return (key / 10) * 10
 		},
@@ -522,10 +487,8 @@ func testAPIErrorModeDeleteLowerThan(t *testing.T, mode bucket.ErrorMode) {
 
 	logger := &LogBuffer{}
 	opts := Options{
-		Options: bucket.Options{
-			ErrorMode: mode,
-			Logger:    logger,
-		},
+		ErrorMode: mode,
+		Logger:    logger,
 		BucketFunc: func(key Key) Key {
 			return (key / 10) * 10
 		},
