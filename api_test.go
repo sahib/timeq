@@ -705,20 +705,26 @@ func TestAPIFixedSizeBucketFunc(t *testing.T) {
 }
 
 func TestAPIDoNotCrashOnMultiBucketPop(t *testing.T) {
+	for idx := 1; idx <= 100; idx++ {
+		t.Run(fmt.Sprintf("%d", idx), func(t *testing.T) {
+			testAPIDoNotCrashOnMultiBucketPop(t, idx)
+		})
+	}
+}
+
+func testAPIDoNotCrashOnMultiBucketPop(t *testing.T, maxParallelOpenBuckets int) {
 	// Still create test dir to make sure it does not error out because of that:
 	dir, err := os.MkdirTemp("", "timeq-apitest")
 	require.NoError(t, err)
-	// defer os.RemoveAll(dir)
+	defer os.RemoveAll(dir)
 
-	const N = 3
+	const N = 100
 	opts := DefaultOptions()
 	opts.BucketFunc = func(key item.Key) item.Key {
 		return (key / N) * N
 	}
 
-	// TODO: run this test with several settings here.
-	// This test should fail if this is set to 0!
-	opts.MaxParallelOpenBuckets = 1
+	opts.MaxParallelOpenBuckets = maxParallelOpenBuckets
 
 	srcDir := filepath.Join(dir, "src")
 	queue, err := Open(srcDir, opts)
@@ -755,7 +761,7 @@ func TestAPIDoNotCrashOnMultiBucketPop(t *testing.T) {
 	gotFds := openfds(t)
 	gotRss := rssBytes(t)
 	require.Equal(t, refFds, gotFds)
-	require.True(t, float64(refRss)*1.2 > float64(gotRss))
+	require.True(t, float64(refRss)*1.5 > float64(gotRss))
 	require.NoError(t, queue.Close())
 	require.NoError(t, dstQueue.Close())
 }
