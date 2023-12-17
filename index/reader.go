@@ -28,7 +28,8 @@ type Reader struct {
 
 func NewReader(r io.Reader) *Reader {
 	return &Reader{
-		r: bufio.NewReaderSize(r, 16*1024),
+		// Reduce number of syscalls needed:
+		r: bufio.NewReaderSize(r, 4*1024),
 	}
 }
 

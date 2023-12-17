@@ -167,12 +167,10 @@ func (bs *Buckets) delete(key item.Key) error {
 	}
 
 	bs.tree.Delete(key)
-	x := errors.Join(
+	return errors.Join(
 		err,
 		os.RemoveAll(bs.buckPath(key)),
 	)
-
-	return x
 }
 
 type IterMode int
