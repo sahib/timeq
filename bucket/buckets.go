@@ -144,13 +144,6 @@ func (bs *Buckets) forKey(key item.Key) (*Bucket, error) {
 	return buck, nil
 }
 
-func (bs *Buckets) Delete(key item.Key) error {
-	bs.mu.Lock()
-	defer bs.mu.Unlock()
-
-	return bs.delete(key)
-}
-
 func (bs *Buckets) delete(key item.Key) error {
 	buck, ok := bs.tree.Get(key)
 	if !ok {
@@ -282,6 +275,7 @@ func (bs *Buckets) Close() error {
 	})
 }
 
+// TODO: Pass index-name here.
 func (bs *Buckets) Len() int {
 	var len int
 	bs.mu.Lock()
@@ -306,6 +300,7 @@ func (bs *Buckets) Len() int {
 	return len
 }
 
+// TODO: Figure out how shovel and multi-consumer mode works together...
 func (bs *Buckets) Shovel(dstBs *Buckets) (int, error) {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
@@ -523,6 +518,7 @@ const (
 type ReadFn func(items item.Items) error
 
 // Read handles all kind of reading operations. It is a low-level function that is not part of the official API.
+// TODO: Pass index-name here.
 func (bs *Buckets) Read(op ReadOp, n int, dst item.Items, fn ReadFn, dstBs *Buckets) error {
 	if n < 0 {
 		// use max value in this case:
@@ -572,6 +568,7 @@ func (bs *Buckets) Read(op ReadOp, n int, dst item.Items, fn ReadFn, dstBs *Buck
 			fnErr = fn(items)
 		}
 
+		// TODO: always close, but only delete if allemtpy.
 		if b.Empty() {
 			if err := bs.delete(key); err != nil {
 				return fmt.Errorf("failed to delete bucket: %w", err)
@@ -591,6 +588,7 @@ func (bs *Buckets) Read(op ReadOp, n int, dst item.Items, fn ReadFn, dstBs *Buck
 	})
 }
 
+// TODO: Pass index-name here.
 func (bs *Buckets) DeleteLowerThan(key item.Key) (int, error) {
 	var numDeleted int
 	var deletableBucks []*Bucket

@@ -165,13 +165,13 @@ func TestBucketsDelete(t *testing.T) {
 	require.NoError(t, err)
 
 	// Delete non-existing yet.
-	require.Error(t, bs.Delete(50))
+	require.Error(t, bs.delete(50))
 
 	// Create bucket and delete again:
 	_, err = bs.forKey(50)
 	require.NoError(t, err)
-	require.NoError(t, bs.Delete(50))
-	require.Error(t, bs.Delete(50))
+	require.NoError(t, bs.delete(50))
+	require.Error(t, bs.delete(50))
 }
 
 func TestBucketsNotEmptyDir(t *testing.T) {

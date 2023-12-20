@@ -139,6 +139,25 @@ func (q *Queue) Close() error {
 	return q.buckets.Close()
 }
 
+type Consumer interface {
+	Pop(n int, dst Items, fn ReadFn) error
+	Peek(n int, dst Items, fn ReadFn) error
+	Move(n int, dst Items, dstQueue *Queue, fn ReadFn) error
+	Len() int
+	// TODO: Add DeleteLowerThan() + Len()
+}
+
+type consumer struct {
+	name  string
+	queue *Queue
+	// TODO: Implement interface here.
+}
+
+func (q *Queue) Consumer(name string) (Consumer, error) {
+	// TODO: Actually register consumers here.
+	return q, nil
+}
+
 // Shovel moves items from `src` to `dst`. The `src` queue will be completely drained
 // afterwards. For speed reasons this assume that the dst queue uses the same bucket func
 // as the source queue. If you cannot guarantee this, you should implement a naive Shovel()

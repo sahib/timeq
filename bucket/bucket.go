@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 
 	"github.com/sahib/timeq/index"
 	"github.com/sahib/timeq/item"
@@ -17,13 +18,62 @@ const (
 	DataLogName = "dat.log"
 )
 
+type Index struct {
+	Log *index.Writer
+	Mem *index.Index
+}
+
 type Bucket struct {
-	dir    string
-	key    item.Key
-	log    *vlog.Log
-	idxLog *index.Writer
-	idx    *index.Index
-	opts   Options
+	dir  string
+	key  item.Key
+	log  *vlog.Log
+	opts Options
+
+	indexes map[string]Index
+
+	// idxLog *index.Writer
+	// idx    *index.Index
+}
+
+func recoverIndexFromLog(log *vlog.Log) error {
+
+	// We try to re-generate the index from the value log if
+	// the index is damaged or missing (in case the value log has some entries).
+	//
+	// Since we have all the keys and offsets there too,
+	// we should be able to recover from that.
+
+	var idxErr error
+	idx, idxErr = index.FromVlog(log)
+	if idxErr != nil {
+		// not much we can do for that case:
+		return nil, fmt.Errorf("index load failed & could not regenerate: %w", idxErr)
+	}
+
+	if idx.Len() > 0 {
+		if err == nil {
+			opts.Logger.Printf("index is empty, but log is not (%s)", idxPath)
+		} else {
+			opts.Logger.Printf("failed to load index %s: %v", idxPath, err)
+		}
+	}
+
+	if err := os.Remove(idxPath); err != nil {
+		return nil, fmt.Errorf("index failover: could not remove broken index: %w", err)
+	}
+
+	// We should write the repaired index after repair, so we don't have to do it
+	// again if this gets interrupted. Also this allows us to just push to the index
+	// instead of having logic later that writes the not yet written part.
+	if err := index.WriteIndex(idx, idxPath); err != nil {
+		return nil, fmt.Errorf("index: write during recover did not work")
+	}
+
+	if idx.Len() > 0 {
+		opts.Logger.Printf("recovered index with %d entries", idx.Len())
+	}
+
+	return nil
 }
 
 func Open(dir string, opts Options) (buck *Bucket, outErr error) {
@@ -58,49 +108,40 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 		return nil, fmt.Errorf("open: %w", err)
 	}
 
-	idxPath := filepath.Join(dir, "idx.log")
-	idx, err := index.Load(idxPath)
-	if err != nil || (idx.NEntries() == 0 && !log.IsEmpty()) {
-		// We try to re-generate the index from the value log if
-		// the index is damaged or missing (in case the value log has some entries).
-		//
-		// Since we have all the keys and offsets there too,
-		// we should be able to recover from that.
+	idxEnts, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
 
-		var idxErr error
-		idx, idxErr = index.FromVlog(log)
-		if idxErr != nil {
-			// not much we can do for that case:
-			return nil, fmt.Errorf("index load failed & could not regenerate: %w", idxErr)
+	indexes := make(map[string]Index, len(idxEnts)-1)
+	for _, idxEnt := range idxEnts {
+		idxName := idxEnt.Name()
+		if !strings.HasSuffix(idxName, "idx.log") {
+			// not a index file.
+			continue
 		}
 
-		if idx.Len() > 0 {
-			if err == nil {
-				opts.Logger.Printf("index is empty, but log is not (%s)", idxPath)
-			} else {
-				opts.Logger.Printf("failed to load index %s: %v", idxPath, err)
+		idxPath := filepath.Join(dir, idxName)
+		idx, err := index.Load(idxPath)
+		if err != nil || (idx.NEntries() == 0 && !log.IsEmpty()) {
+			idx, err := recoverIndexFromLog(log) // TODO: revisit.
+			if err != nil {
+				return err
 			}
 		}
 
-		if err := os.Remove(idxPath); err != nil {
-			return nil, fmt.Errorf("index failover: could not remove broken index: %w", err)
+		idxLog, err := index.NewWriter(idxPath, opts.SyncMode&SyncIndex > 0)
+		if err != nil {
+			return nil, fmt.Errorf("index writer: %w", err)
 		}
 
-		// We should write the repaired index after repair, so we don't have to do it
-		// again if this gets interrupted. Also this allows us to just push to the index
-		// instead of having logic later that writes the not yet written part.
-		if err := index.WriteIndex(idx, idxPath); err != nil {
-			return nil, fmt.Errorf("index: write during recover did not work")
-		}
+		consumerName := strings.TrimSuffix(idxName, "idx.log")
+		consumerName = strings.TrimSuffix(idxName, ".")
 
-		if idx.Len() > 0 {
-			opts.Logger.Printf("recovered index with %d entries", idx.Len())
+		indexes[consumerName] = Index{
+			Log: idxLog,
+			Mem: idx,
 		}
-	}
-
-	idxLog, err := index.NewWriter(idxPath, opts.SyncMode&SyncIndex > 0)
-	if err != nil {
-		return nil, fmt.Errorf("index writer: %w", err)
 	}
 
 	key, err := item.KeyFromString(filepath.Base(dir))
@@ -109,26 +150,38 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 	}
 
 	return &Bucket{
-		dir:    dir,
-		key:    item.Key(key),
-		log:    log,
-		idx:    idx,
-		idxLog: idxLog,
-		opts:   opts,
+		dir:     dir,
+		key:     item.Key(key),
+		log:     log,
+		indexes: indexes,
+		opts:    opts,
 	}, nil
 }
 
 func (b *Bucket) Sync(force bool) error {
-	return errors.Join(b.log.Sync(force), b.idxLog.Sync(force))
+	err := b.log.Sync(force)
+	for _, idx := range b.indexes {
+		err = errors.Join(err, idx.Log.Sync(force))
+	}
+
+	return err
 }
 
 func (b *Bucket) Close() error {
-	return errors.Join(
-		b.log.Sync(true),
-		b.idxLog.Sync(true),
-		b.log.Close(),
-		b.idxLog.Close(),
-	)
+	err := b.log.Close()
+	for _, idx := range b.indexes {
+		err = errors.Join(err, idx.Log.Close())
+	}
+
+	return err
+
+	// TODO: Close all indexes.
+	// return errors.Join(
+	// 	b.log.Sync(true),
+	// 	b.idxLog.Sync(true),
+	// 	b.log.Close(),
+	// 	b.idxLog.Close(),
+	// )
 }
 
 func recoverMmapError(dstErr *error) {
@@ -151,9 +204,11 @@ func (b *Bucket) Push(items item.Items) (outErr error) {
 		return fmt.Errorf("push: log: %w", err)
 	}
 
-	b.idx.Set(loc)
-	if err := b.idxLog.Push(loc, b.idx.Trailer()); err != nil {
-		return fmt.Errorf("push: index-log: %w", err)
+	for name, idx := range b.indexes {
+		idx.Mem.Set(loc)
+		if err := idx.Log.Push(loc, idx.Mem.Trailer()); err != nil {
+			return fmt.Errorf("push: index-log: %s: %w", name, err)
+		}
 	}
 
 	return nil
@@ -177,19 +232,26 @@ func (b *Bucket) addIter(batchIters *vlog.Iters, idxIter *index.Iter) (bool, err
 	return !idxIter.Next(), nil
 }
 
-func (b *Bucket) Pop(n int, dst item.Items) (item.Items, int, error) {
+func (b *Bucket) Pop(n int, dst item.Items, name string) (item.Items, int, error) {
+	// TODO: Pass index-name for Pop/Peek/Move.
 	if n <= 0 {
 		// technically that's a valid use case.
 		return dst, 0, nil
 	}
 
-	iters, items, npopped, err := b.peek(n, dst)
+	idx, ok := b.indexes[name]
+	if !ok {
+		// TODO: this is an error?
+		return dst, 0, fmt.Errorf("no such consumer »%s«", name)
+	}
+
+	iters, items, npopped, err := b.peek(n, dst, idx.Mem)
 	if err != nil {
 		return items, npopped, err
 	}
 
 	if iters != nil {
-		if err := b.popSync(iters); err != nil {
+		if err := b.popSync(idx, iters); err != nil {
 			return items, npopped, err
 		}
 	}
@@ -231,11 +293,11 @@ func (b *Bucket) Move(n int, dst item.Items, dstBuck *Bucket) (item.Items, int, 
 }
 
 // peek reads from the bucket, but does not mark the elements as deleted yet.
-func (b *Bucket) peek(n int, dst item.Items) (batchIters *vlog.Iters, outItems item.Items, npopped int, outErr error) {
+func (b *Bucket) peek(n int, dst item.Items, idx *index.Index) (batchIters *vlog.Iters, outItems item.Items, npopped int, outErr error) {
 	defer recoverMmapError(&outErr)
 
 	// Fetch the lowest entry of the index:
-	idxIter := b.idx.Iter()
+	idxIter := idx.Iter()
 	if !idxIter.Next() {
 		// The index is empty. Nothing to pop.
 		return nil, dst, 0, nil
@@ -251,7 +313,7 @@ func (b *Bucket) peek(n int, dst item.Items) (batchIters *vlog.Iters, outItems i
 
 	if len(*batchIters) == 0 {
 		// this should not happen normally, but can possibly
-		// in case of broken index or wal.
+		// in case of broken index or WAL.
 		return nil, dst, 0, err
 	}
 
@@ -293,7 +355,7 @@ func (b *Bucket) peek(n int, dst item.Items) (batchIters *vlog.Iters, outItems i
 	return batchIters, dst, numAppends, nil
 }
 
-func (b *Bucket) popSync(batchIters *vlog.Iters) error {
+func (b *Bucket) popSync(idx Index, batchIters *vlog.Iters) error {
 	if batchIters == nil || len(*batchIters) == 0 {
 		return nil
 	}
@@ -310,29 +372,30 @@ func (b *Bucket) popSync(batchIters *vlog.Iters) error {
 
 			// some keys were take from it, but not all (or none)
 			// we need to adjust the index to keep those reachable.
-			b.idx.Set(currLoc)
+			idx.Mem.Set(currLoc)
 
-			if err := b.idxLog.Push(currLoc, b.idx.Trailer()); err != nil {
+			if err := idx.Log.Push(currLoc, idx.Mem.Trailer()); err != nil {
 				return fmt.Errorf("idxlog: append begun: %w", err)
 			}
 		}
 
 		// Make sure the previous batch index entry gets deleted:
-		b.idx.Delete(batchIter.FirstKey())
+		idx.Mem.Delete(batchIter.FirstKey())
 		deadLoc := item.Location{
 			Key: batchIter.FirstKey(),
 			Len: 0,
 			Off: 0,
 		}
-		if err := b.idxLog.Push(deadLoc, b.idx.Trailer()); err != nil {
+		if err := idx.Log.Push(deadLoc, idx.Mem.Trailer()); err != nil {
 			return fmt.Errorf("idxlog: append begun: %w", err)
 		}
 	}
 
-	return b.idxLog.Sync(false)
+	return idx.Log.Sync(false)
 }
 
 func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
+	// TODO: Pass index-name.
 	defer recoverMmapError(&outErr)
 
 	if b.key >= key {
@@ -406,6 +469,7 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
 }
 
 func (b *Bucket) Empty() bool {
+	// TODO: Split in AllEmpty() und Empty(name)
 	return b.idx.Len() == 0
 }
 
@@ -413,7 +477,8 @@ func (b *Bucket) Key() item.Key {
 	return b.key
 }
 
-func (b *Bucket) Len() int {
+func (b *Bucket) Len(consumerName string) int {
+	// TODO: Pass name.
 	size := 0
 	iter := b.idx.Iter()
 	for iter.Next() {
@@ -421,4 +486,16 @@ func (b *Bucket) Len() int {
 	}
 
 	return size
+}
+
+func (b *Bucket) Fork(src, dst string) error {
+	// TODO:
+	// 1. Copy some index (which one?!) to name.idx
+	// 2. Either return a Bucket API that uses that or make every op take a name.
+	//    (latter one would be less efficient?)
+	return nil
+}
+
+func (b *Bucket) RemoveFork(name string) error {
+	return nil
 }
