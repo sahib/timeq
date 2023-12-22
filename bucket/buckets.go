@@ -343,7 +343,7 @@ func (bs *Buckets) Shovel(dstBs *Buckets) (int, error) {
 			return err
 		}
 
-		_, ncopied, err := srcBuck.Move(math.MaxInt, buf, dstBuck)
+		_, ncopied, err := srcBuck.Move(math.MaxInt, buf[:0], dstBuck)
 		ntotalcopied += ncopied
 		return err
 	})
