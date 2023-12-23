@@ -20,7 +20,7 @@ const (
 	burstSize = 10
 )
 
-func push(t *testing.T, q *Queue, batchIdx int64) {
+func push(t *testing.T, rng *rand.Rand, q *Queue, batchIdx int64) {
 	// Each batch should have a more or less random offset from the keyOff:
 	batchOff := batchIdx * int64(2*time.Second+time.Duration(rand.Int63n(int64(500*time.Millisecond)))-500*time.Millisecond)
 
@@ -39,7 +39,7 @@ func push(t *testing.T, q *Queue, batchIdx int64) {
 		100,
 	}
 
-	batchLen := batchLenOptions[rand.Intn(len(batchLenOptions))]
+	batchLen := batchLenOptions[rng.Intn(len(batchLenOptions))]
 
 	var batch Items
 
@@ -47,10 +47,10 @@ func push(t *testing.T, q *Queue, batchIdx int64) {
 		burstOff := (idx / burstSize) * int64(10*time.Millisecond)
 		key := keyOff + batchOff + burstOff + int64(idx%burstSize)
 
-		blobSize := rand.Intn(100)
+		blobSize := rng.Intn(100)
 		blob := make([]byte, blobSize)
 
-		_, err := rand.Read(blob)
+		_, err := rng.Read(blob)
 		require.NoError(t, err)
 
 		item := Item{
@@ -104,9 +104,9 @@ func move(t *testing.T, waiting, unacked *Queue) {
 	}))
 }
 
-func ack(t *testing.T, waiting, unacked *Queue) {
+func ack(t *testing.T, rng *rand.Rand, waiting, unacked *Queue) {
 	// Each batch should have a more or less random offset from the keyOff:
-	deleteOff := Key(rand.Int63n(int64(time.Minute)) - int64(15*time.Second))
+	deleteOff := Key(rng.Int63n(int64(time.Minute)) - int64(15*time.Second))
 
 	var waitingOff Key
 	require.NoError(t, waiting.Peek(1, nil, func(items Items) error {
@@ -135,7 +135,7 @@ func TestRealWorldAckQueue(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
-	rand.Seed(0)
+	rng := rand.New(rand.NewSource(0))
 
 	opts := DefaultOptions()
 	opts.BucketFunc = ShiftBucketFunc(35)
@@ -168,7 +168,7 @@ func TestRealWorldAckQueue(t *testing.T) {
 		var batchIdx int64
 
 		for idx := 0; idx < 2; idx++ {
-			push(t, waitingQueue, batchIdx)
+			push(t, rng, waitingQueue, batchIdx)
 			batchIdx++
 		}
 
@@ -177,14 +177,14 @@ func TestRealWorldAckQueue(t *testing.T) {
 		}
 
 		for idx := 0; idx < 10; idx++ {
-			push(t, waitingQueue, batchIdx)
+			push(t, rng, waitingQueue, batchIdx)
 			batchIdx++
 		}
 
 		shovel(t, waitingQueue, unackedQueue)
 
 		for idx := 0; idx < 10; idx++ {
-			push(t, waitingQueue, batchIdx)
+			push(t, rng, waitingQueue, batchIdx)
 			batchIdx++
 		}
 
@@ -192,7 +192,7 @@ func TestRealWorldAckQueue(t *testing.T) {
 			move(t, waitingQueue, unackedQueue)
 		}
 
-		ack(t, waitingQueue, unackedQueue)
+		ack(t, rng, waitingQueue, unackedQueue)
 
 		for idx := 0; idx < 100; idx++ {
 			move(t, waitingQueue, unackedQueue)

@@ -668,9 +668,10 @@ func TestAPIFixedSizeBucketFunc(t *testing.T) {
 }
 
 func TestAPIDoNotCrashOnMultiBucketPop(t *testing.T) {
-	for idx := 1; idx <= 100; idx++ {
-		t.Run(fmt.Sprintf("%d", idx), func(t *testing.T) {
-			testAPIDoNotCrashOnMultiBucketPop(t, idx)
+	mpobs := []int{0, 1, 2, 3, 5, 7, 10, 25, 50, 100, 101}
+	for _, mpob := range mpobs {
+		t.Run(fmt.Sprintf("%d", mpob), func(t *testing.T) {
+			testAPIDoNotCrashOnMultiBucketPop(t, mpob)
 		})
 	}
 }
