@@ -121,7 +121,8 @@ func (ls *Iters) Push(x any) {
 }
 
 func (ls *Iters) Pop() any {
-	// NOTE: This is currently unused.
+	// NOTE: This is currently unused,
+	// just implemented for the heap.Interface.
 	old := *ls
 	n := len(old)
 	x := old[n-1]
