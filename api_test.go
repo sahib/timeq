@@ -793,3 +793,60 @@ func TestAPIShovelMemoryUsage(t *testing.T) {
 	require.NoError(t, srcQueue.Close())
 	require.NoError(t, dstQueue.Close())
 }
+
+func TestAPIZeroLengthPush(t *testing.T) {
+	// Still create test dir to make sure it does not error out because of that:
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	queue, err := Open(dir, DefaultOptions())
+	require.NoError(t, err)
+
+	require.NoError(t, queue.Push(Items{}))
+	require.NoError(t, queue.Pop(1, nil, func(_ Items) error {
+		require.Fail(t, "should not have been executed")
+		return nil
+	}))
+
+	// Check that items after it are still reachable if there's a zero item:
+	emptyItems := Items{{Key: 1, Blob: []byte{}}}
+	nonEmptyItems := Items{{Key: 2, Blob: []byte("hello world")}}
+
+	require.NoError(t, queue.Push(append(emptyItems, nonEmptyItems...)))
+
+	var executed bool
+	require.NoError(t, queue.Pop(2, nil, func(items Items) error {
+		require.Equal(t, emptyItems[0], items[0])
+		require.Equal(t, nonEmptyItems[0], items[1])
+		executed = true
+		return nil
+	}))
+
+	require.True(t, executed)
+	require.NoError(t, queue.Close())
+}
+
+func TestAPIZeroKeyPush(t *testing.T) {
+	// Still create test dir to make sure it does not error out because of that:
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	queue, err := Open(dir, DefaultOptions())
+	require.NoError(t, err)
+
+	zeroKey := Items{{Key: 0, Blob: []byte{}}}
+	require.NoError(t, queue.Push(zeroKey))
+	require.Equal(t, 1, queue.Len())
+
+	var executed bool
+	require.NoError(t, queue.Pop(1, nil, func(items Items) error {
+		require.Equal(t, zeroKey, items)
+		executed = true
+		return nil
+	}))
+
+	require.True(t, executed)
+	require.NoError(t, queue.Close())
+}

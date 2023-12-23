@@ -47,13 +47,6 @@ func (li *Iter) Next(itDst *item.Item) bool {
 		break
 	}
 
-	if len(li.item.Blob) == 0 {
-		// this can happen at the very end of the log
-		// (if not iterating in "batch mode")
-		li.exhausted = true
-		return false
-	}
-
 	li.prevOff = li.currOff
 	li.prevLen = li.currLen
 

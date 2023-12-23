@@ -47,7 +47,8 @@ func push(t *testing.T, rng *rand.Rand, q *Queue, batchIdx int64) {
 		burstOff := (idx / burstSize) * int64(10*time.Millisecond)
 		key := keyOff + batchOff + burstOff + int64(idx%burstSize)
 
-		blobSize := rng.Intn(100)
+		// TODO: BUG: blob size may not be zero!
+		blobSize := rng.Intn(100) + 1
 		blob := make([]byte, blobSize)
 
 		_, err := rng.Read(blob)
@@ -81,10 +82,14 @@ func shovel(t *testing.T, waiting, unacked *Queue) {
 
 func move(t *testing.T, waiting, unacked *Queue) {
 	var lastKey Key
+	var count int
 
+	queueLenBefore := waiting.Len()
 	const popSize = 2000
 	dst := make(Items, popSize)
 	require.NoError(t, waiting.Move(popSize, dst[:0], unacked, func(items Items) error {
+		count += len(items)
+
 		for idx, item := range items {
 			if lastKey != 0 && item.Key < lastKey {
 				diff := time.Duration(lastKey - item.Key)
@@ -102,6 +107,13 @@ func move(t *testing.T, waiting, unacked *Queue) {
 
 		return nil
 	}))
+
+	expect := popSize
+	if popSize > queueLenBefore {
+		expect = queueLenBefore
+	}
+
+	require.Equal(t, expect, count)
 }
 
 func ack(t *testing.T, rng *rand.Rand, waiting, unacked *Queue) {
@@ -138,7 +150,7 @@ func TestRealWorldAckQueue(t *testing.T) {
 	rng := rand.New(rand.NewSource(0))
 
 	opts := DefaultOptions()
-	opts.BucketFunc = ShiftBucketFunc(35)
+	opts.BucketFunc = ShiftBucketFunc(30)
 	opts.MaxParallelOpenBuckets = 4
 
 	waitingDir := filepath.Join(dir, "waiting")
@@ -167,12 +179,12 @@ func TestRealWorldAckQueue(t *testing.T) {
 	for run := 0; run < 10; run++ {
 		var batchIdx int64
 
-		for idx := 0; idx < 2; idx++ {
+		for idx := 0; idx < 10; idx++ {
 			push(t, rng, waitingQueue, batchIdx)
 			batchIdx++
 		}
 
-		for idx := 0; idx < 1; idx++ {
+		for idx := 0; idx < 5; idx++ {
 			move(t, waitingQueue, unackedQueue)
 		}
 
