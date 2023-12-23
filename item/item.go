@@ -34,7 +34,7 @@ func (k Key) String() string {
 	return fmt.Sprintf("K%020d", int64(k))
 }
 
-type Off uint32
+type Off uint64
 
 type Item struct {
 	Key  Key

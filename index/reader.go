@@ -12,8 +12,8 @@ import (
 const TrailerSize = 4
 
 // LocationSize is the physical storage of a single item
-// (8 for the key, 4 for the wal offset, 4 for the len)
-const LocationSize = 8 + 4 + 4 + TrailerSize
+// (8 for the key, 8 for the wal offset, 4 for the len)
+const LocationSize = 8 + 8 + 4 + TrailerSize
 
 type Trailer struct {
 	TotalEntries item.Off
@@ -44,7 +44,7 @@ func (fi *Reader) Next(loc *item.Location) bool {
 
 	loc.Key = item.Key(binary.BigEndian.Uint64(fi.locBuf[:8]))
 	loc.Off = item.Off(binary.BigEndian.Uint32(fi.locBuf[8:]))
-	loc.Len = item.Off(binary.BigEndian.Uint32(fi.locBuf[12:]))
+	loc.Len = item.Off(binary.BigEndian.Uint32(fi.locBuf[16:]))
 	// NOTE: trailer with size / len is ignored here. See ReadTrailer()
 	return true
 }

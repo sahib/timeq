@@ -151,13 +151,6 @@ func (l *Log) Push(items item.Items) (loc item.Location, err error) {
 
 	nextMmapSize := nextSize(l.size + int64(addSize))
 	if nextMmapSize > int64(len(l.mmap)) {
-		if nextMmapSize > int64(^item.Off(0)) {
-			// the mmap size is bigger than what our offsets can handle.
-			// we have to error out.
-			err = fmt.Errorf("wal-file bigger than 4GB")
-			return
-		}
-
 		// currently mmapped region does not suffice,
 		// allocate more space for it.
 		if err = l.fd.Truncate(nextMmapSize); err != nil {
