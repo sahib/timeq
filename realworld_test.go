@@ -209,6 +209,18 @@ func TestRealWorldAckQueue(t *testing.T) {
 		for idx := 0; idx < 100; idx++ {
 			move(t, waitingQueue, unackedQueue)
 		}
+
+		if run == 5 {
+			// Re-open in between to make it a bit harder:
+			require.NoError(t, waitingQueue.Close())
+			require.NoError(t, unackedQueue.Close())
+
+			waitingQueue, err = Open(waitingDir, opts)
+			require.NoError(t, err)
+
+			unackedQueue, err = Open(unackedDir, opts)
+			require.NoError(t, err)
+		}
 	}
 
 	require.NoError(t, waitingQueue.Close())

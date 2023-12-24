@@ -43,7 +43,7 @@ func (fi *Reader) Next(loc *item.Location) bool {
 	}
 
 	loc.Key = item.Key(binary.BigEndian.Uint64(fi.locBuf[:8]))
-	loc.Off = item.Off(binary.BigEndian.Uint32(fi.locBuf[8:]))
+	loc.Off = item.Off(binary.BigEndian.Uint64(fi.locBuf[8:]))
 	loc.Len = item.Off(binary.BigEndian.Uint32(fi.locBuf[16:]))
 	// NOTE: trailer with size / len is ignored here. See ReadTrailer()
 	return true
