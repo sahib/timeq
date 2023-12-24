@@ -58,7 +58,7 @@ func (i *Item) Copy() Item {
 	}
 }
 
-// Location references the location of a batch in a
+// Location references the location of a batch in dat.log
 type Location struct {
 	// Key is the priority key of the first item in the batch
 	Key Key
