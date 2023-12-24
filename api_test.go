@@ -852,7 +852,11 @@ func TestAPIZeroKeyPush(t *testing.T) {
 }
 
 func getSizeOfDir(t *testing.T, root string) (size int64) {
-	require.NoError(t, filepath.Walk(root, func(path string, info fs.FileInfo, err error) error {
+	require.NoError(t, filepath.Walk(root, func(_ string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
 		if !info.Mode().IsRegular() {
 			return nil
 		}
