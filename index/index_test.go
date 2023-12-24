@@ -39,7 +39,7 @@ func TestIndexLoad(t *testing.T) {
 
 	// if length=0 then Load() considers the entry
 	// as "delete previous items with this key".
-	var count int = 1
+	var count = 1
 	for iter := index.Iter(); iter.Next(); {
 		require.Equal(t, item.Location{
 			Key: item.Key(count),

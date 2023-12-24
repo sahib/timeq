@@ -47,13 +47,6 @@ func (li *Iter) Next(itDst *item.Item) bool {
 		break
 	}
 
-	if len(li.item.Blob) == 0 {
-		// this can happen at the very end of the log
-		// (if not iterating in "batch mode")
-		li.exhausted = true
-		return false
-	}
-
 	li.prevOff = li.currOff
 	li.prevLen = li.currLen
 
@@ -121,7 +114,8 @@ func (ls *Iters) Push(x any) {
 }
 
 func (ls *Iters) Pop() any {
-	// NOTE: This is currently unused.
+	// NOTE: This is currently unused,
+	// just implemented for the heap.Interface.
 	old := *ls
 	n := len(old)
 	x := old[n-1]

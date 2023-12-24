@@ -34,7 +34,7 @@ func (k Key) String() string {
 	return fmt.Sprintf("K%020d", int64(k))
 }
 
-type Off uint32
+type Off uint64
 
 type Item struct {
 	Key  Key
@@ -58,7 +58,7 @@ func (i *Item) Copy() Item {
 	}
 }
 
-// Location references the location of a batch in a
+// Location references the location of a batch in dat.log
 type Location struct {
 	// Key is the priority key of the first item in the batch
 	Key Key

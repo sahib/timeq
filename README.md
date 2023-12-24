@@ -91,6 +91,12 @@ BenchmarkPushSyncFull-16     	  19994	    59491 ns/op	     72 B/op	      2 alloc
 Since the index is quite small (only one entry per batch) we can easily fit it in memory.
 On the initial load all bucket indexes are loaded, but no memory is mapped yet.
 
+### Limits
+
+* Each item payload might be at most 64M.
+* Each bucket can be at most 2^63 bytes in size.
+* Using priority keys close to the integer limits is most certainly a bad idea.
+
 ### Data Layout
 
 The data is stored on disk in two files per bucket:
@@ -156,7 +162,6 @@ This allows a very small footprint, especially if the push intput is already rou
 There are also some other reasons:
 
 * If one bucket becomes corrupt for some reason, you loose only the data in this bucket.
-* Buckets cannot grow over 4GB due to the offsets being 32-bit values.
 * On ``Shovel()`` we can cheaply move buckets if they do not exist in the destination.
 
 ### How do I choose the right size of my buckets?

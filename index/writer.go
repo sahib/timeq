@@ -22,14 +22,17 @@ func NewWriter(path string, sync bool) (*Writer, error) {
 		return nil, err
 	}
 
-	return &Writer{fd: fd}, nil
+	return &Writer{
+		fd:   fd,
+		sync: sync,
+	}, nil
 }
 
 func (w *Writer) Push(loc item.Location, trailer Trailer) error {
 	binary.BigEndian.PutUint64(w.locBuf[0:], uint64(loc.Key))
-	binary.BigEndian.PutUint32(w.locBuf[8:], uint32(loc.Off))
-	binary.BigEndian.PutUint32(w.locBuf[12:], uint32(loc.Len))
-	binary.BigEndian.PutUint32(w.locBuf[16:], uint32(trailer.TotalEntries))
+	binary.BigEndian.PutUint64(w.locBuf[8:], uint64(loc.Off))
+	binary.BigEndian.PutUint32(w.locBuf[16:], uint32(loc.Len))
+	binary.BigEndian.PutUint32(w.locBuf[20:], uint32(trailer.TotalEntries))
 	_, err := w.fd.Write(w.locBuf[:])
 	return err
 }

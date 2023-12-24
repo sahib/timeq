@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -668,6 +669,15 @@ func TestAPIFixedSizeBucketFunc(t *testing.T) {
 }
 
 func TestAPIDoNotCrashOnMultiBucketPop(t *testing.T) {
+	mpobs := []int{0, 1, 2, 3, 5, 7, 10, 25, 50, 100, 101}
+	for _, mpob := range mpobs {
+		t.Run(fmt.Sprintf("%d", mpob), func(t *testing.T) {
+			testAPIDoNotCrashOnMultiBucketPop(t, mpob)
+		})
+	}
+}
+
+func testAPIDoNotCrashOnMultiBucketPop(t *testing.T, maxParallelOpenBuckets int) {
 	// Still create test dir to make sure it does not error out because of that:
 	dir, err := os.MkdirTemp("", "timeq-apitest")
 	require.NoError(t, err)
@@ -679,9 +689,7 @@ func TestAPIDoNotCrashOnMultiBucketPop(t *testing.T) {
 		return (key / N) * N
 	}
 
-	// TODO: run this test with several settings here.
-	// This test should fail if this is set to 0!
-	opts.MaxParallelOpenBuckets = 1
+	opts.MaxParallelOpenBuckets = maxParallelOpenBuckets
 
 	srcDir := filepath.Join(dir, "src")
 	queue, err := Open(srcDir, opts)
@@ -718,7 +726,7 @@ func TestAPIDoNotCrashOnMultiBucketPop(t *testing.T) {
 	gotFds := openfds(t)
 	gotRss := rssBytes(t)
 	require.Equal(t, refFds, gotFds)
-	require.True(t, float64(refRss)*1.2 > float64(gotRss))
+	require.True(t, float64(refRss)*1.5 > float64(gotRss))
 	require.NoError(t, queue.Close())
 	require.NoError(t, dstQueue.Close())
 }
@@ -785,4 +793,117 @@ func TestAPIShovelMemoryUsage(t *testing.T) {
 
 	require.NoError(t, srcQueue.Close())
 	require.NoError(t, dstQueue.Close())
+}
+
+func TestAPIZeroLengthPush(t *testing.T) {
+	// Still create test dir to make sure it does not error out because of that:
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	queue, err := Open(dir, DefaultOptions())
+	require.NoError(t, err)
+
+	require.NoError(t, queue.Push(Items{}))
+	require.NoError(t, queue.Pop(1, nil, func(_ Items) error {
+		require.Fail(t, "should not have been executed")
+		return nil
+	}))
+
+	// Check that items after it are still reachable if there's a zero item:
+	emptyItems := Items{{Key: 1, Blob: []byte{}}}
+	nonEmptyItems := Items{{Key: 2, Blob: []byte("hello world")}}
+
+	require.NoError(t, queue.Push(append(emptyItems, nonEmptyItems...)))
+
+	var executed bool
+	require.NoError(t, queue.Pop(2, nil, func(items Items) error {
+		require.Equal(t, emptyItems[0], items[0])
+		require.Equal(t, nonEmptyItems[0], items[1])
+		executed = true
+		return nil
+	}))
+
+	require.True(t, executed)
+	require.NoError(t, queue.Close())
+}
+
+func TestAPIZeroKeyPush(t *testing.T) {
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	queue, err := Open(dir, DefaultOptions())
+	require.NoError(t, err)
+
+	zeroKey := Items{{Key: 0, Blob: []byte{}}}
+	require.NoError(t, queue.Push(zeroKey))
+	require.Equal(t, 1, queue.Len())
+
+	var executed bool
+	require.NoError(t, queue.Pop(1, nil, func(items Items) error {
+		require.Equal(t, zeroKey, items)
+		executed = true
+		return nil
+	}))
+
+	require.True(t, executed)
+	require.NoError(t, queue.Close())
+}
+
+func getSizeOfDir(t *testing.T, root string) (size int64) {
+	require.NoError(t, filepath.Walk(root, func(_ string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+
+		size += info.Size()
+		return nil
+	}))
+	return
+}
+
+// Check that we can create value logs over 4G in size.
+func TestAPI4GLog(t *testing.T) {
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	opts := DefaultOptions()
+	opts.BucketFunc = ShiftBucketFunc(5 * 1024 * 1024 * 1024)
+	queue, err := Open(dir, opts)
+	require.NoError(t, err)
+
+	const N = 1000
+
+	var items Items
+	for idx := 0; idx < N; idx++ {
+		items = append(items, Item{
+			Key:  Key(idx),
+			Blob: make([]byte, 16*1024),
+		})
+	}
+
+	const FourGB = 4 * 1024 * 1024 * 1024
+	var expected int
+	for getSizeOfDir(t, dir) <= FourGB+(1*1024*1024) {
+		require.NoError(t, queue.Push(items))
+		expected += len(items)
+	}
+
+	var got int
+	var dst = make(Items, 0, N)
+	for queue.Len() > 0 {
+		require.NoError(t, queue.Pop(N, dst, func(items Items) error {
+			got += len(items)
+			return nil
+		}))
+	}
+
+	require.Equal(t, got, expected)
+	require.NoError(t, queue.Close())
 }

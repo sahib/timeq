@@ -334,22 +334,27 @@ func (b *Bucket) peek(n int, dst item.Items, idx *index.Index) (batchIters *vlog
 			return nil, dst, 0, err
 		}
 
+		// Check the exhausted state as heap.Fix might change the sorting.
+		// NOTE: we could do heap.Pop() here to pop the exhausted iters away,
+		// but we need the exhausted iters too give them to popSync() later.
+		currIsExhausted := (*batchIters)[0].Exhausted()
+
+		// Repair sorting of the heap as we changed the value of the first iter.
+		heap.Fix(batchIters, 0)
+
 		// index batch entries might be overlapping. We need to check if the
 		// next entry in the index needs to be taken into account for the next
 		// iteration. For this we compare the next index entry to the
 		// supposedly next batch value.
 		if !indexExhausted {
 			nextLoc := idxIter.Value()
-			if (*batchIters)[0].Exhausted() || nextLoc.Key <= nextItem.Key {
+			if currIsExhausted || nextLoc.Key <= nextItem.Key {
 				indexExhausted, err = b.addIter(batchIters, &idxIter)
 				if err != nil {
 					return nil, dst, 0, err
 				}
 			}
 		}
-
-		// Repair sorting of the heap as we changed the value of the first iter.
-		heap.Fix(batchIters, 0)
 	}
 
 	return batchIters, dst, numAppends, nil
