@@ -1,7 +1,6 @@
 package vlog
 
 import (
-	"container/heap"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -145,25 +144,24 @@ func testIterBrokenStream(t *testing.T, overwriteIndex int, continueOnErr bool) 
 func TestIterHeap(t *testing.T) {
 	iters := Iters{}
 	itersHeap := &iters
-	heap.Init(itersHeap)
 	require.Equal(t, 0, itersHeap.Len())
 
-	heap.Push(itersHeap, Iter{
+	itersHeap.Push(Iter{
 		exhausted: true,
 		item:      item.Item{Key: 100},
 	})
-	heap.Push(itersHeap, Iter{
+	itersHeap.Push(Iter{
 		exhausted: false,
 		item:      item.Item{Key: 50},
 	})
-	heap.Push(itersHeap, Iter{
+	itersHeap.Push(Iter{
 		exhausted: false,
 		item:      item.Item{Key: 0},
 	})
 
-	it1 := heap.Pop(itersHeap).(Iter)
-	it2 := heap.Pop(itersHeap).(Iter)
-	it3 := heap.Pop(itersHeap).(Iter)
+	it1 := iters[0] // min must be at front.
+	it2 := iters[2] // heap condition says it should be second.
+	it3 := iters[1] // third one.
 
 	require.False(t, it1.Exhausted())
 	require.False(t, it2.Exhausted())

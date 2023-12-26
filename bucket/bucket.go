@@ -1,7 +1,6 @@
 package bucket
 
 import (
-	"container/heap"
 	"errors"
 	"fmt"
 	"os"
@@ -132,7 +131,9 @@ func (b *Bucket) Close() error {
 }
 
 func recoverMmapError(dstErr *error) {
-	// See comment in Open()
+	// See comment in Open().
+	// NOTE: calling recover() is surprisingly quite expensive.
+	// Do not call in this loops.
 	if recErr := recover(); recErr != nil {
 		*dstErr = fmt.Errorf("panic (check: enough space left / file issues): %v - trace:\n%s", recErr, string(debug.Stack()))
 	}
@@ -173,7 +174,7 @@ func (b *Bucket) addIter(batchIters *vlog.Iters, idxIter *index.Iter) (bool, err
 		return false, batchIter.Err()
 	}
 
-	heap.Push(batchIters, batchIter)
+	batchIters.Push(batchIter)
 	return !idxIter.Next(), nil
 }
 
@@ -259,26 +260,26 @@ func (b *Bucket) peek(n int, dst item.Items) (batchIters *vlog.Iters, outItems i
 	// iteration will yield the next highest key.
 	var numAppends int
 	for numAppends < n && !(*batchIters)[0].Exhausted() {
-		batchItem := (*batchIters)[0].Item()
-		dst = append(dst, batchItem)
+		var currIter *vlog.Iter = &(*batchIters)[0]
+		dst = append(dst, currIter.Item())
 		numAppends++
 
 		// advance current batch iter. We will make sure at the
 		// end of the loop that the currently first one gets sorted
 		// correctly if it turns out to be out-of-order.
 		var nextItem item.Item
-		(*batchIters)[0].Next(&nextItem)
-		if err := (*batchIters)[0].Err(); err != nil {
+		currIter.Next(&nextItem)
+		if err := currIter.Err(); err != nil {
 			return nil, dst, 0, err
 		}
 
 		// Check the exhausted state as heap.Fix might change the sorting.
 		// NOTE: we could do heap.Pop() here to pop the exhausted iters away,
 		// but we need the exhausted iters too give them to popSync() later.
-		currIsExhausted := (*batchIters)[0].Exhausted()
+		currIsExhausted := currIter.Exhausted()
 
 		// Repair sorting of the heap as we changed the value of the first iter.
-		heap.Fix(batchIters, 0)
+		batchIters.Fix(0)
 
 		// index batch entries might be overlapping. We need to check if the
 		// next entry in the index needs to be taken into account for the next

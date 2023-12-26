@@ -157,7 +157,7 @@ of the existing benchmarks to test your assumptions.
 ### Why should I care about buckets?
 
 Most importantly: Only buckets are loaded which are being in use.
-This allows a very small footprint, especially if the push intput is already roughly sorted.
+This allows a very small footprint, especially if the push input is already roughly sorted.
 
 There are also some other reasons:
 

@@ -4,14 +4,23 @@ import (
 	"github.com/sahib/timeq/item"
 )
 
+// TODO: Can we reduce the size of Iter so it fits in a cache line?
+// This should make peek() quite a bit faster.
+//
+// Possible ideas to get down from 104:
+//
+// - Use only one len field. -> -8
+// - Always pass Item out on Next() as out param. -> -32
+// - Do not use exhausted, set len to 0.
+// - continueOnErr can be part of Log.
 type Iter struct {
 	firstKey         item.Key
-	currOff, currLen item.Off
-	prevOff, prevLen item.Off
+	currOff, prevOff item.Off
 	item             item.Item
-	exhausted        bool
 	log              *Log
 	err              error
+	currLen, prevLen item.Off
+	exhausted        bool
 	continueOnErr    bool
 }
 
@@ -89,36 +98,4 @@ func (li *Iter) CurrentLocation() item.Location {
 
 func (li *Iter) Err() error {
 	return li.err
-}
-
-////////////////
-
-type Iters []Iter
-
-// Make LogIter usable by heap.Interface
-func (ls Iters) Len() int      { return len(ls) }
-func (ls Iters) Swap(i, j int) { ls[i], ls[j] = ls[j], ls[i] }
-func (ls Iters) Less(i, j int) bool {
-	ii, ij := ls[i], ls[j]
-	if ii.exhausted != ij.exhausted {
-		// sort exhausted iters to the back
-		return !ii.exhausted
-	}
-
-	ki, kj := ii.item.Key, ij.item.Key
-	return ki < kj
-}
-
-func (ls *Iters) Push(x any) {
-	*ls = append(*ls, x.(Iter))
-}
-
-func (ls *Iters) Pop() any {
-	// NOTE: This is currently unused,
-	// just implemented for the heap.Interface.
-	old := *ls
-	n := len(old)
-	x := old[n-1]
-	*ls = old[0 : n-1]
-	return x
 }
