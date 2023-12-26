@@ -270,13 +270,14 @@ func (bs *Buckets) Close() error {
 	defer bs.mu.Unlock()
 
 	return bs.iter(LoadedOnly, func(_ item.Key, b *Bucket) error {
-		bs.trailers[b.Key()] = b.idx.Trailer()
+		// TODO: We need to store trailer info for all known consumers here.
+		//       On fork we also need to copy it.
+		// bs.trailers[b.Key()] = b.idx.Trailer()
 		return b.Close()
 	})
 }
 
-// TODO: Pass index-name here.
-func (bs *Buckets) Len() int {
+func (bs *Buckets) Len(consumer string) (int, error) {
 	var len int
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
@@ -293,11 +294,16 @@ func (bs *Buckets) Len() int {
 			return nil
 		}
 
-		len += b.Len()
+		blen, err := b.Len(consumer)
+		if err != nil {
+			return err
+		}
+
+		len += blen
 		return nil
 	})
 
-	return len
+	return len, nil
 }
 
 // TODO: Figure out how shovel and multi-consumer mode works together...
@@ -343,7 +349,9 @@ func (bs *Buckets) Shovel(dstBs *Buckets) (int, error) {
 			return err
 		}
 
-		_, ncopied, err := srcBuck.Move(math.MaxInt, buf[:0], dstBuck)
+		// TODO: Specifying a single consumer here does not work well. Do we have to copy all consumers then?
+		// Or should we skip the directory move?
+		_, ncopied, err := srcBuck.Move(math.MaxInt, buf[:0], dstBuck, "")
 		ntotalcopied += ncopied
 
 		return err
@@ -421,7 +429,8 @@ func (bs *Buckets) closeUnused(maxBucks int) error {
 			continue
 		}
 
-		trailer := bucket.idx.Trailer()
+		// TODO: Store all trailers here.
+		// trailer := bucket.idx.Trailer()
 		if err := bucket.Close(); err != nil {
 			switch bs.opts.ErrorMode {
 			case ErrorModeAbort:
@@ -432,7 +441,7 @@ func (bs *Buckets) closeUnused(maxBucks int) error {
 		}
 
 		bs.tree.Set(key, nil)
-		bs.trailers[key] = trailer
+		// bs.trailers[key] = trailer
 		nClosed++
 	}
 
@@ -519,8 +528,7 @@ const (
 type ReadFn func(items item.Items) error
 
 // Read handles all kind of reading operations. It is a low-level function that is not part of the official API.
-// TODO: Pass index-name here.
-func (bs *Buckets) Read(op ReadOp, n int, dst item.Items, fn ReadFn, dstBs *Buckets) error {
+func (bs *Buckets) Read(op ReadOp, n int, dst item.Items, consumer string, fn ReadFn, dstBs *Buckets) error {
 	if n < 0 {
 		// use max value in this case:
 		n = int(^uint(0) >> 1)
@@ -532,7 +540,7 @@ func (bs *Buckets) Read(op ReadOp, n int, dst item.Items, fn ReadFn, dstBs *Buck
 	var count = n
 	return bs.iter(Load, func(key item.Key, b *Bucket) error {
 		// Choose the right func for the operation:
-		var opFn func(n int, dst item.Items) (item.Items, int, error)
+		var opFn func(n int, dst item.Items, consumer string) (item.Items, int, error)
 		switch op {
 		case ReadOpPop:
 			opFn = b.Pop
@@ -540,20 +548,20 @@ func (bs *Buckets) Read(op ReadOp, n int, dst item.Items, fn ReadFn, dstBs *Buck
 			opFn = b.Peek
 		case ReadOpMove:
 			// Move() has a slightly different signature, so adapter is needed.
-			opFn = func(count int, dst item.Items) (item.Items, int, error) {
+			opFn = func(count int, dst item.Items, consumer string) (item.Items, int, error) {
 				dstBuck, err := dstBs.forKey(b.key)
 				if err != nil {
 					return dst, 0, nil
 				}
 
-				return b.Move(count, dst, dstBuck)
+				return b.Move(count, dst, dstBuck, consumer)
 			}
 		default:
 			// programmer error
 			panic("invalid op")
 		}
 
-		items, nitems, err := opFn(count, dst)
+		items, nitems, err := opFn(count, dst, consumer)
 		if err != nil {
 			if bs.opts.ErrorMode == ErrorModeAbort {
 				return err
@@ -569,8 +577,7 @@ func (bs *Buckets) Read(op ReadOp, n int, dst item.Items, fn ReadFn, dstBs *Buck
 			fnErr = fn(items)
 		}
 
-		// TODO: always close, but only delete if allemtpy.
-		if b.Empty() {
+		if b.AllEmpty() {
 			if err := bs.delete(key); err != nil {
 				return fmt.Errorf("failed to delete bucket: %w", err)
 			}
@@ -589,8 +596,7 @@ func (bs *Buckets) Read(op ReadOp, n int, dst item.Items, fn ReadFn, dstBs *Buck
 	})
 }
 
-// TODO: Pass index-name here.
-func (bs *Buckets) DeleteLowerThan(key item.Key) (int, error) {
+func (bs *Buckets) DeleteLowerThan(consumer string, key item.Key) (int, error) {
 	var numDeleted int
 	var deletableBucks []*Bucket
 
@@ -603,7 +609,7 @@ func (bs *Buckets) DeleteLowerThan(key item.Key) (int, error) {
 			return IterStop
 		}
 
-		numDeletedOfBucket, err := buck.DeleteLowerThan(key)
+		numDeletedOfBucket, err := buck.DeleteLowerThan(consumer, key)
 		if err != nil {
 			if bs.opts.ErrorMode == ErrorModeAbort {
 				return err
@@ -615,7 +621,7 @@ func (bs *Buckets) DeleteLowerThan(key item.Key) (int, error) {
 		}
 
 		numDeleted += numDeletedOfBucket
-		if buck.Empty() {
+		if buck.AllEmpty() {
 			deletableBucks = append(deletableBucks, buck)
 		}
 
@@ -633,4 +639,18 @@ func (bs *Buckets) DeleteLowerThan(key item.Key) (int, error) {
 	}
 
 	return numDeleted, nil
+}
+
+func (bs *Buckets) RemoveFork(consumer string) error {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+
+	return bs.iter(IncludeNil, func(key item.Key, buck *Bucket) error {
+		if buck != nil {
+			return buck.RemoveFork(consumer)
+		}
+
+		buckDir := filepath.Join(bs.dir, key.String())
+		return os.Remove(idxPath(buckDir, consumer))
+	})
 }

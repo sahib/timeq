@@ -92,13 +92,13 @@ func (q *Queue) Push(items Items) error {
 // almost certainly lead to a crash. If you need them outside (e.g. for
 // appending to a slice) then you can use the Copy() function of Items.
 func (q *Queue) Pop(n int, dst Items, fn ReadFn) error {
-	return q.buckets.Read(bucket.ReadOpPop, n, dst, fn, nil)
+	return q.buckets.Read(bucket.ReadOpPop, n, dst, "", fn, nil)
 }
 
 // Peek works like Pop, but does not delete the items in the queue.
 // Please read the documentation of Pop() too.
 func (q *Queue) Peek(n int, dst Items, fn ReadFn) error {
-	return q.buckets.Read(bucket.ReadOpPeek, n, dst, fn, nil)
+	return q.buckets.Read(bucket.ReadOpPeek, n, dst, "", fn, nil)
 }
 
 // Move works like Pop, but it pushes the popped items to `dstQueue` immediately.
@@ -106,19 +106,20 @@ func (q *Queue) Peek(n int, dst Items, fn ReadFn) error {
 // as it deletes the popped data only when the push was successful.
 // Please read the documentation of Pop() too.
 func (q *Queue) Move(n int, dst Items, dstQueue *Queue, fn ReadFn) error {
-	return q.buckets.Read(bucket.ReadOpMove, n, dst, fn, dstQueue.buckets)
+	return q.buckets.Read(bucket.ReadOpMove, n, dst, "", fn, dstQueue.buckets)
 }
 
 // DeleteLowerThan deletes all items lower than `key`.
 func (q *Queue) DeleteLowerThan(key Key) (int, error) {
-	return q.buckets.DeleteLowerThan(key)
+	return q.buckets.DeleteLowerThan("", key)
 }
 
 // Len returns the number of items in the queue.
 // NOTE: This gets more expensive when you have a higher number of buckets,
 // so you probably should not call that in a hot loop.
 func (q *Queue) Len() int {
-	return q.buckets.Len()
+	ln, _ := q.buckets.Len("")
+	return ln
 }
 
 // Sync can be called to explicitly sync the queue contents
@@ -143,19 +144,58 @@ type Consumer interface {
 	Pop(n int, dst Items, fn ReadFn) error
 	Peek(n int, dst Items, fn ReadFn) error
 	Move(n int, dst Items, dstQueue *Queue, fn ReadFn) error
+	DeleteLowerThan(key Key) (int, error)
 	Len() int
-	// TODO: Add DeleteLowerThan() + Len()
+
+	// TODO: Shovel()?
+}
+
+type Fork interface {
+	Consumer
+	Remove() error
+	Fork(name string) error
 }
 
 type consumer struct {
-	name  string
-	queue *Queue
-	// TODO: Implement interface here.
+	name string
+	q    *Queue
 }
 
-func (q *Queue) Consumer(name string) (Consumer, error) {
-	// TODO: Actually register consumers here.
-	return q, nil
+// Check that Queue also implements the Consumer interface.
+var _ Consumer = &Queue{}
+
+// TODO: register consumers here lazily on first use.
+
+func (c *consumer) Pop(n int, dst Items, fn ReadFn) error {
+	return c.q.buckets.Read(bucket.ReadOpPop, n, dst, c.name, fn, nil)
+}
+func (c *consumer) Peek(n int, dst Items, fn ReadFn) error {
+	return c.q.buckets.Read(bucket.ReadOpPeek, n, dst, c.name, fn, nil)
+}
+func (c *consumer) Move(n int, dst Items, dstQueue *Queue, fn ReadFn) error {
+	return c.q.buckets.Read(bucket.ReadOpMove, n, dst, c.name, fn, dstQueue.buckets)
+}
+func (c *consumer) Len() int {
+	// ignore the error, as it can only happen with bad consumer name.
+	ln, _ := c.q.buckets.Len(c.name)
+	return ln
+}
+
+func (c *consumer) DeleteLowerThan(key Key) (int, error) {
+	return c.q.buckets.DeleteLowerThan(c.name, key)
+}
+
+// Remove removes this fork. The consumer should not be used afterwards anymore.
+func (c *consumer) Remove() error {
+	return c.q.buckets.RemoveFork(c.name)
+}
+
+func (q *Queue) Fork(name string) (Consumer, error) {
+	return &consumer{name: name, q: q}, nil
+}
+
+func (q *Queue) Forks() []string {
+	return nil
 }
 
 // Shovel moves items from `src` to `dst`. The `src` queue will be completely drained

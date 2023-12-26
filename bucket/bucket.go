@@ -29,34 +29,47 @@ type Bucket struct {
 	log  *vlog.Log
 	opts Options
 
+	// TODO: Support lazy loading indexes later on?
 	indexes map[string]Index
-
-	// idxLog *index.Writer
-	// idx    *index.Index
 }
 
-func recoverIndexFromLog(log *vlog.Log) error {
+var (
+	ErrNoSuchConsumer = errors.New("no consumer with that name")
+)
 
+func (b *Bucket) idxForConsumer(consumer string) (Index, error) {
+	idx, ok := b.indexes[consumer]
+	if !ok {
+		return idx, ErrNoSuchConsumer
+	}
+
+	return idx, nil
+}
+
+func recoverIndexFromLog(opts *Options, log *vlog.Log, idxPath string) (*index.Index, error) {
 	// We try to re-generate the index from the value log if
 	// the index is damaged or missing (in case the value log has some entries).
 	//
 	// Since we have all the keys and offsets there too,
-	// we should be able to recover from that.
+	// we should be able to recover from that. This will not consider already deleted
+	// entries of course, as those are marked in the index file, but not in the value log.
+	// It's better to replay old values twice then to loose values.
 
-	var idxErr error
-	idx, idxErr = index.FromVlog(log)
-	if idxErr != nil {
+	var memErr error
+	mem, memErr := index.FromVlog(log)
+	if memErr != nil {
 		// not much we can do for that case:
-		return nil, fmt.Errorf("index load failed & could not regenerate: %w", idxErr)
+		return nil, fmt.Errorf("index load failed & could not regenerate: %w", memErr)
 	}
 
-	if idx.Len() > 0 {
-		if err == nil {
-			opts.Logger.Printf("index is empty, but log is not (%s)", idxPath)
-		} else {
-			opts.Logger.Printf("failed to load index %s: %v", idxPath, err)
-		}
-	}
+	// TODO: what is this?
+	// if mem.Len() > 0 {
+	// 	if err == nil {
+	// 		opts.Logger.Printf("index is empty, but log is not (%s)", idxPath)
+	// 	} else {
+	// 		opts.Logger.Printf("failed to load index %s: %v", idxPath, err)
+	// 	}
+	// }
 
 	if err := os.Remove(idxPath); err != nil {
 		return nil, fmt.Errorf("index failover: could not remove broken index: %w", err)
@@ -65,15 +78,27 @@ func recoverIndexFromLog(log *vlog.Log) error {
 	// We should write the repaired index after repair, so we don't have to do it
 	// again if this gets interrupted. Also this allows us to just push to the index
 	// instead of having logic later that writes the not yet written part.
-	if err := index.WriteIndex(idx, idxPath); err != nil {
+	if err := index.WriteIndex(mem, idxPath); err != nil {
 		return nil, fmt.Errorf("index: write during recover did not work")
 	}
 
-	if idx.Len() > 0 {
-		opts.Logger.Printf("recovered index with %d entries", idx.Len())
+	if ln := mem.Len(); ln > 0 {
+		opts.Logger.Printf("recovered index with %d entries", ln)
 	}
 
-	return nil
+	return mem, nil
+}
+
+func idxPath(dir, consumer string) string {
+	// TODO: Do we use this logic somewhere else?
+	var idxName string
+	if consumer == "" {
+		idxName = "idx.log"
+	} else {
+		idxName = consumer + ".idx.log"
+	}
+
+	return filepath.Join(dir, idxName)
 }
 
 func Open(dir string, opts Options) (buck *Bucket, outErr error) {
@@ -124,9 +149,9 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 		idxPath := filepath.Join(dir, idxName)
 		idx, err := index.Load(idxPath)
 		if err != nil || (idx.NEntries() == 0 && !log.IsEmpty()) {
-			idx, err := recoverIndexFromLog(log) // TODO: revisit.
+			idx, err = recoverIndexFromLog(&opts, log, idxPath)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 
@@ -174,14 +199,6 @@ func (b *Bucket) Close() error {
 	}
 
 	return err
-
-	// TODO: Close all indexes.
-	// return errors.Join(
-	// 	b.log.Sync(true),
-	// 	b.idxLog.Sync(true),
-	// 	b.log.Close(),
-	// 	b.idxLog.Close(),
-	// )
 }
 
 func recoverMmapError(dstErr *error) {
@@ -232,17 +249,15 @@ func (b *Bucket) addIter(batchIters *vlog.Iters, idxIter *index.Iter) (bool, err
 	return !idxIter.Next(), nil
 }
 
-func (b *Bucket) Pop(n int, dst item.Items, name string) (item.Items, int, error) {
-	// TODO: Pass index-name for Pop/Peek/Move.
+func (b *Bucket) Pop(n int, dst item.Items, consumer string) (item.Items, int, error) {
 	if n <= 0 {
 		// technically that's a valid use case.
 		return dst, 0, nil
 	}
 
-	idx, ok := b.indexes[name]
-	if !ok {
-		// TODO: this is an error?
-		return dst, 0, fmt.Errorf("no such consumer »%s«", name)
+	idx, err := b.idxForConsumer(consumer)
+	if err != nil {
+		return dst, 0, err
 	}
 
 	iters, items, npopped, err := b.peek(n, dst, idx.Mem)
@@ -259,12 +274,17 @@ func (b *Bucket) Pop(n int, dst item.Items, name string) (item.Items, int, error
 	return items, npopped, nil
 }
 
-func (b *Bucket) Peek(n int, dst item.Items) (item.Items, int, error) {
+func (b *Bucket) Peek(n int, dst item.Items, consumer string) (item.Items, int, error) {
 	if n <= 0 {
 		return dst, 0, nil
 	}
 
-	_, items, npopped, err := b.peek(n, dst)
+	idx, err := b.idxForConsumer(consumer)
+	if err != nil {
+		return dst, 0, err
+	}
+
+	_, items, npopped, err := b.peek(n, dst, idx.Mem)
 	return items, npopped, err
 }
 
@@ -272,13 +292,18 @@ func (b *Bucket) Peek(n int, dst item.Items) (item.Items, int, error) {
 // crashes the data might be present in the destination queue, but is
 // not yet deleted from the source queue. Callers should be ready to
 // handle duplicates.
-func (b *Bucket) Move(n int, dst item.Items, dstBuck *Bucket) (item.Items, int, error) {
+func (b *Bucket) Move(n int, dst item.Items, dstBuck *Bucket, consumer string) (item.Items, int, error) {
 	if n <= 0 {
-		// technically that's a valid usecase.
+		// technically that's a valid use case.
 		return dst, 0, nil
 	}
 
-	iters, items, npopped, err := b.peek(n, dst)
+	idx, err := b.idxForConsumer(consumer)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	iters, items, npopped, err := b.peek(n, dst, idx.Mem)
 	if err != nil {
 		return items, npopped, err
 	}
@@ -289,7 +314,7 @@ func (b *Bucket) Move(n int, dst item.Items, dstBuck *Bucket) (item.Items, int, 
 		}
 	}
 
-	return items, npopped, b.popSync(iters)
+	return items, npopped, b.popSync(idx, iters)
 }
 
 // peek reads from the bucket, but does not mark the elements as deleted yet.
@@ -399,8 +424,7 @@ func (b *Bucket) popSync(idx Index, batchIters *vlog.Iters) error {
 	return idx.Log.Sync(false)
 }
 
-func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
-	// TODO: Pass index-name.
+func (b *Bucket) DeleteLowerThan(consumer string, key item.Key) (ndeleted int, outErr error) {
 	defer recoverMmapError(&outErr)
 
 	if b.key >= key {
@@ -408,12 +432,17 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
 		return 0, nil
 	}
 
-	lenBefore := b.idx.Len()
+	idx, err := b.idxForConsumer(consumer)
+	if err != nil {
+		return 0, err
+	}
+
+	lenBefore := idx.Mem.Len()
 
 	var pushErr error
 	var deleteEntries []item.Key
 	var partialSetEntries []item.Location
-	for iter := b.idx.Iter(); iter.Next(); {
+	for iter := idx.Mem.Iter(); iter.Next(); {
 		loc := iter.Value()
 		if loc.Key >= key {
 			// this index entry may live untouched.
@@ -443,7 +472,7 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
 			ndeleted += int(loc.Len - partialLoc.Len)
 			pushErr = errors.Join(
 				pushErr,
-				b.idxLog.Push(partialLoc, index.Trailer{
+				idx.Log.Push(partialLoc, index.Trailer{
 					TotalEntries: lenBefore - item.Off(ndeleted),
 				}),
 			)
@@ -456,8 +485,8 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
 	}
 
 	for _, key := range deleteEntries {
-		b.idx.Delete(key)
-		pushErr = errors.Join(pushErr, b.idxLog.Push(item.Location{
+		idx.Mem.Delete(key)
+		pushErr = errors.Join(pushErr, idx.Log.Push(item.Location{
 			Key: key,
 			Len: 0,
 			Off: 0,
@@ -467,30 +496,59 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
 	}
 
 	for _, loc := range partialSetEntries {
-		b.idx.Set(loc)
+		idx.Mem.Set(loc)
 	}
 
-	return ndeleted, errors.Join(pushErr, b.idxLog.Sync(false))
+	return ndeleted, errors.Join(pushErr, idx.Log.Sync(false))
 }
 
-func (b *Bucket) Empty() bool {
+func (b *Bucket) AllEmpty() bool {
+	for _, idx := range b.indexes {
+		if idx.Mem.Len() > 0 {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (b *Bucket) Empty(consumer string) (bool, error) {
 	// TODO: Split in AllEmpty() und Empty(name)
-	return b.idx.Len() == 0
+	idx, err := b.idxForConsumer(consumer)
+	if err != nil {
+		return false, err
+	}
+
+	return idx.Mem.Len() == 0, nil
 }
 
 func (b *Bucket) Key() item.Key {
 	return b.key
 }
 
-func (b *Bucket) Len(consumerName string) int {
-	// TODO: Pass name.
+func (b *Bucket) Trailer(consumer string) index.Trailer {
+	idx, err := b.idxForConsumer(consumer)
+	if err != nil {
+		return index.Trailer{}
+	}
+
+	return idx.Mem.Trailer()
+}
+
+func (b *Bucket) Len(consumer string) (int, error) {
 	size := 0
-	iter := b.idx.Iter()
+	idx, err := b.idxForConsumer(consumer)
+	if err != nil {
+		return 0, err
+	}
+
+	iter := idx.Mem.Iter()
+	// TODO: Can't we just use idx.Mem.Len()?
 	for iter.Next() {
 		size += int(iter.Value().Len)
 	}
 
-	return size
+	return size, nil
 }
 
 func (b *Bucket) Fork(src, dst string) error {
@@ -502,5 +560,15 @@ func (b *Bucket) Fork(src, dst string) error {
 }
 
 func (b *Bucket) RemoveFork(name string) error {
+	// TODO: Implement.
 	return nil
+}
+
+func (b *Bucket) Consumers() []string {
+	consumers := make([]string, 0, len(b.indexes))
+	for consumer := range b.indexes {
+		consumers = append(consumers, consumer)
+	}
+
+	return consumers
 }
