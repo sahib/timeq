@@ -58,7 +58,10 @@ func benchmarkPushPopWithSyncMode(b *testing.B, benchmarkPush bool, syncMode buc
 		}
 		dstItems = dstItems[:0]
 
-		err = queue.Pop(len(items), dstItems[:0], nil)
+		// The "-1" is to avoid deleting the bucket over and over.
+		// We want to benchmark the actual pop and not the deletion
+		// on empty buckets (to make it comparable to previous bench numbers).
+		err = queue.Pop(len(items)-1, dstItems[:0], nil)
 		if !benchmarkPush {
 			b.StopTimer()
 		}
