@@ -419,11 +419,5 @@ func (b *Bucket) Key() item.Key {
 }
 
 func (b *Bucket) Len() int {
-	size := 0
-	iter := b.idx.Iter()
-	for iter.Next() {
-		size += int(iter.Value().Len)
-	}
-
-	return size
+	return int(b.idx.Len())
 }
