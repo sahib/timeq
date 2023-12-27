@@ -35,9 +35,9 @@ func TestIter(t *testing.T) {
 	})
 
 	var count int
-	var it item.Item
 	iter := log.At(loc, true)
-	for iter.Next(&it) {
+	for iter.Next() {
+		it := iter.Item()
 		require.Equal(t, item.Item{
 			Key:  item.Key(count + 10),
 			Blob: []byte(fmt.Sprintf("%d", count+10)),
@@ -69,8 +69,7 @@ func TestIterEmpty(t *testing.T) {
 	require.NoError(t, err)
 	iter := log.At(item.Location{}, true)
 
-	var it item.Item
-	require.False(t, iter.Next(&it))
+	require.False(t, iter.Next())
 	require.NoError(t, iter.Err())
 	require.NoError(t, log.Close())
 }
@@ -89,8 +88,7 @@ func TestIterInvalidLocation(t *testing.T) {
 		Len: 1000,
 	}, true)
 
-	var it item.Item
-	require.False(t, iter.Next(&it))
+	require.False(t, iter.Next())
 	require.True(t, iter.Exhausted())
 	require.NoError(t, iter.Err())
 	require.NoError(t, log.Close())
@@ -132,13 +130,13 @@ func testIterBrokenStream(t *testing.T, overwriteIndex int, continueOnErr bool) 
 	// The iterator should be able to figure out the next
 	// value at least:
 	iter := log.At(loc, continueOnErr)
-	var it item.Item
 	if continueOnErr {
-		require.True(t, iter.Next(&it))
+		require.True(t, iter.Next())
+		it := iter.Item()
 		require.Equal(t, item.Key(42), it.Key)
 		require.Equal(t, item2.Blob, it.Blob)
 	}
-	require.False(t, iter.Next(&it))
+	require.False(t, iter.Next())
 }
 
 func TestIterHeap(t *testing.T) {

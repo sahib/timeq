@@ -16,6 +16,7 @@ import (
 //   - Do not use exhausted, set len to 0.
 //     -> Does not work, as currLen is zero before last call to Next()
 //   - continueOnErr can be part of Log. -8 (if exhausted goes away too)
+//   - error could be returned on Next() directly.
 type Iter struct {
 	firstKey         item.Key
 	currOff, prevOff item.Off
@@ -27,7 +28,7 @@ type Iter struct {
 	continueOnErr    bool
 }
 
-func (li *Iter) Next(itDst *item.Item) bool {
+func (li *Iter) Next() bool {
 	if li.currLen == 0 || li.exhausted {
 		li.exhausted = true
 		return false
@@ -65,10 +66,6 @@ func (li *Iter) Next(itDst *item.Item) bool {
 	// advance iter to next position:
 	li.currOff += item.Off(li.item.StorageSize())
 	li.currLen--
-
-	if itDst != nil {
-		*itDst = li.item
-	}
 
 	return true
 }

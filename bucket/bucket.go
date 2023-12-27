@@ -169,7 +169,7 @@ func (b *Bucket) logAt(loc item.Location) vlog.Iter {
 func (b *Bucket) addIter(batchIters *vlog.Iters, idxIter *index.Iter) (bool, error) {
 	loc := idxIter.Value()
 	batchIter := b.logAt(loc)
-	if !batchIter.Next(nil) {
+	if !batchIter.Next() {
 		// might be empty or I/O error:
 		return false, batchIter.Err()
 	}
@@ -267,8 +267,8 @@ func (b *Bucket) peek(n int, dst item.Items) (batchIters *vlog.Iters, outItems i
 		// advance current batch iter. We will make sure at the
 		// end of the loop that the currently first one gets sorted
 		// correctly if it turns out to be out-of-order.
-		var nextItem item.Item
-		currIter.Next(&nextItem)
+		currIter.Next()
+		currKey := currIter.Item().Key
 		if err := currIter.Err(); err != nil {
 			return nil, dst, 0, err
 		}
@@ -287,7 +287,7 @@ func (b *Bucket) peek(n int, dst item.Items) (batchIters *vlog.Iters, outItems i
 		// supposedly next batch value.
 		if !indexExhausted {
 			nextLoc := idxIter.Value()
-			if currIsExhausted || nextLoc.Key <= nextItem.Key {
+			if currIsExhausted || nextLoc.Key <= currKey {
 				indexExhausted, err = b.addIter(batchIters, &idxIter)
 				if err != nil {
 					return nil, dst, 0, err
@@ -360,11 +360,11 @@ func (b *Bucket) DeleteLowerThan(key item.Key) (ndeleted int, outErr error) {
 
 		// we need to check until what point we need to delete.
 		var partialFound bool
-		var partialItem item.Item
 		var partialLoc item.Location
 
 		logIter := b.logAt(loc)
-		for logIter.Next(&partialItem) {
+		for logIter.Next() {
+			partialItem := logIter.Item()
 			partialLoc = logIter.CurrentLocation()
 			if partialItem.Key >= key {
 				partialFound = true

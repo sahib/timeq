@@ -29,14 +29,14 @@ func FromVlog(log *vlog.Log) (*Index, error) {
 
 	index := &Index{}
 
-	var it item.Item
 	var prevLoc item.Location
 	var lastLoc item.Location
 	var isInitialItem = true
 
 	// Go over the data and try to find runs of data that are sorted in
 	// ascending order. Each deviant item is the start of a new run.
-	for iter.Next(&it) {
+	for iter.Next() {
+		it := iter.Item()
 		if prevLoc.Key > it.Key {
 			index.Set(lastLoc)
 			lastLoc.Off = prevLoc.Off
