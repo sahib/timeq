@@ -422,3 +422,25 @@ func (b *Bucket) Key() item.Key {
 func (b *Bucket) Len() int {
 	return int(b.idx.Len())
 }
+
+func filterIsNotExist(err error) error {
+	if os.IsNotExist(err) {
+		return nil
+	}
+
+	return err
+}
+
+func removeBucketDir(dir string) error {
+	// We do this here because os.RemoveAll() is a bit more expensive,
+	// as it does some extra syscalls and some portability checks that
+	// we do not really need. Just delete them explicitly.
+	//
+	// We also don't care if the files actually existed, as long as they
+	// are gone after this function call.
+	return errors.Join(
+		filterIsNotExist(os.Remove(filepath.Join(dir, "idx.log"))),
+		filterIsNotExist(os.Remove(filepath.Join(dir, "dat.log"))),
+		filterIsNotExist(os.Remove(dir)),
+	)
+}

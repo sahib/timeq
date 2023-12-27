@@ -160,16 +160,20 @@ func (bs *Buckets) delete(key item.Key) error {
 	delete(bs.trailers, key)
 
 	var err error
+	var dir string
 	if buck != nil {
 		// make sure to close the bucket, otherwise we will accumulate mmaps, which
 		// will sooner or later lead to memory allocation issues/errors.
 		err = buck.Close()
+		dir = buck.dir // save on allocation of buckPath()
+	} else {
+		dir = bs.buckPath(key)
 	}
 
 	bs.tree.Delete(key)
 	return errors.Join(
 		err,
-		os.RemoveAll(bs.buckPath(key)),
+		removeBucketDir(dir),
 	)
 }
 
