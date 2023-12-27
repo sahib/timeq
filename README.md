@@ -142,6 +142,7 @@ is memory mapped, it's a safety mechanism not to clean up keys directly after
   The bigger the log, the bigger the pre-allocation.
 * Sorting into buckets during `Push()` uses binary search for fast sorting.
 * `Shovel()` can move whole bucket directories, if possible.
+* In general, machine empathy was applied to some extent to make the code cache friendly.
 
 ## FAQ:
 

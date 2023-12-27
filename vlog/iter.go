@@ -9,10 +9,13 @@ import (
 //
 // Possible ideas to get down from 104:
 //
-// - Use only one len field. -> -8
-// - Always pass Item out on Next() as out param. -> -32
-// - Do not use exhausted, set len to 0.
-// - continueOnErr can be part of Log.
+//   - Use only one len field. -> -8
+//   - Always pass Item out on Next() as out param. -> -32
+//     -> Not possible, because the item might not be consumed directly
+//     as we might realize that another iter has more priority.
+//   - Do not use exhausted, set len to 0.
+//     -> Does not work, as currLen is zero before last call to Next()
+//   - continueOnErr can be part of Log. -8 (if exhausted goes away too)
 type Iter struct {
 	firstKey         item.Key
 	currOff, prevOff item.Off
