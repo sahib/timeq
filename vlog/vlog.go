@@ -135,7 +135,7 @@ func (l *Log) writeItem(it item.Item) {
 	off += int64(copy(l.mmap[off:], it.Blob))
 
 	// add trailer mark:
-	l.mmap[off+0] = 0xFF
+	l.mmap[off] = 0xFF
 	l.mmap[off+1] = 0xFF
 	l.size = off + item.TrailerSize
 }

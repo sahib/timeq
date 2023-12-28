@@ -1,7 +1,6 @@
 package bucket
 
 import (
-	"container/heap"
 	"errors"
 	"fmt"
 	"os"
@@ -62,7 +61,7 @@ func recoverIndexFromLog(opts *Options, log *vlog.Log, idxPath string) (*index.I
 		return nil, fmt.Errorf("index load failed & could not regenerate: %w", memErr)
 	}
 
-	// TODO: what is this?
+	// TODO: what is this doing?
 	// if mem.Len() > 0 {
 	// 	if err == nil {
 	// 		opts.Logger.Printf("index is empty, but log is not (%s)", idxPath)
@@ -160,10 +159,7 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 			return nil, fmt.Errorf("index writer: %w", err)
 		}
 
-		consumerName := strings.TrimSuffix(idxName, "idx.log")
-		consumerName = strings.TrimSuffix(idxName, ".")
-
-		indexes[consumerName] = Index{
+		indexes[index.ConsumerNameFromBasename(idxName)] = Index{
 			Log: idxLog,
 			Mem: idx,
 		}
@@ -202,11 +198,14 @@ func (b *Bucket) Close() error {
 }
 
 func recoverMmapError(dstErr *error) {
-	// See comment in Open()
+	// See comment in Open().
+	// NOTE: calling recover() is surprisingly quite expensive.
+	// Do not call in this loops.
 	if recErr := recover(); recErr != nil {
 		*dstErr = fmt.Errorf("panic (check: enough space left / file issues): %v - trace:\n%s", recErr, string(debug.Stack()))
 	}
 }
+
 
 // Push expects pre-sorted items!
 func (b *Bucket) Push(items item.Items) (outErr error) {
@@ -240,12 +239,12 @@ func (b *Bucket) logAt(loc item.Location) vlog.Iter {
 func (b *Bucket) addIter(batchIters *vlog.Iters, idxIter *index.Iter) (bool, error) {
 	loc := idxIter.Value()
 	batchIter := b.logAt(loc)
-	if !batchIter.Next(nil) {
+	if !batchIter.Next() {
 		// might be empty or I/O error:
 		return false, batchIter.Err()
 	}
 
-	heap.Push(batchIters, batchIter)
+	batchIters.Push(batchIter)
 	return !idxIter.Next(), nil
 }
 
@@ -346,26 +345,26 @@ func (b *Bucket) peek(n int, dst item.Items, idx *index.Index) (batchIters *vlog
 	// iteration will yield the next highest key.
 	var numAppends int
 	for numAppends < n && !(*batchIters)[0].Exhausted() {
-		batchItem := (*batchIters)[0].Item()
-		dst = append(dst, batchItem)
+		var currIter *vlog.Iter = &(*batchIters)[0]
+		dst = append(dst, currIter.Item())
 		numAppends++
 
 		// advance current batch iter. We will make sure at the
 		// end of the loop that the currently first one gets sorted
 		// correctly if it turns out to be out-of-order.
-		var nextItem item.Item
-		(*batchIters)[0].Next(&nextItem)
-		if err := (*batchIters)[0].Err(); err != nil {
+		currIter.Next()
+		currKey := currIter.Item().Key
+		if err := currIter.Err(); err != nil {
 			return nil, dst, 0, err
 		}
 
 		// Check the exhausted state as heap.Fix might change the sorting.
 		// NOTE: we could do heap.Pop() here to pop the exhausted iters away,
 		// but we need the exhausted iters too give them to popSync() later.
-		currIsExhausted := (*batchIters)[0].Exhausted()
+		currIsExhausted := currIter.Exhausted()
 
 		// Repair sorting of the heap as we changed the value of the first iter.
-		heap.Fix(batchIters, 0)
+		batchIters.Fix(0)
 
 		// index batch entries might be overlapping. We need to check if the
 		// next entry in the index needs to be taken into account for the next
@@ -373,7 +372,7 @@ func (b *Bucket) peek(n int, dst item.Items, idx *index.Index) (batchIters *vlog
 		// supposedly next batch value.
 		if !indexExhausted {
 			nextLoc := idxIter.Value()
-			if currIsExhausted || nextLoc.Key <= nextItem.Key {
+			if currIsExhausted || nextLoc.Key <= currKey {
 				indexExhausted, err = b.addIter(batchIters, &idxIter)
 				if err != nil {
 					return nil, dst, 0, err
@@ -451,11 +450,11 @@ func (b *Bucket) DeleteLowerThan(consumer string, key item.Key) (ndeleted int, o
 
 		// we need to check until what point we need to delete.
 		var partialFound bool
-		var partialItem item.Item
 		var partialLoc item.Location
 
 		logIter := b.logAt(loc)
-		for logIter.Next(&partialItem) {
+		for logIter.Next() {
+			partialItem := logIter.Item()
 			partialLoc = logIter.CurrentLocation()
 			if partialItem.Key >= key {
 				partialFound = true
@@ -536,19 +535,12 @@ func (b *Bucket) Trailer(consumer string) index.Trailer {
 }
 
 func (b *Bucket) Len(consumer string) (int, error) {
-	size := 0
 	idx, err := b.idxForConsumer(consumer)
 	if err != nil {
 		return 0, err
 	}
 
-	iter := idx.Mem.Iter()
-	// TODO: Can't we just use idx.Mem.Len()?
-	for iter.Next() {
-		size += int(iter.Value().Len)
-	}
-
-	return size, nil
+	return int(idx.Mem.Len()), nil
 }
 
 func (b *Bucket) Fork(src, dst string) error {
@@ -556,12 +548,45 @@ func (b *Bucket) Fork(src, dst string) error {
 	// 1. Copy some index (which one?!) to name.idx
 	// 2. Either return a Bucket API that uses that or make every op take a name.
 	//    (latter one would be less efficient?)
+	srcIdx, err := b.idxForConsumer(src)
+	if err != nil {
+		return err
+	}
+
+	// If we fork to `dst`, then dst should better not exist.
+	if _, err := b.idxForConsumer(dst); err == nil {
+		return errors.New("dst already exists")
+	}
+
+	dstPath := idxPath(b.dir, dst)
+	if err := index.WriteIndex(srcIdx.Mem, dstPath); err != nil {
+		return err
+	}
+
+	dstIdxLog, err := index.NewWriter(dstPath, b.opts.SyncMode&SyncIndex > 0)
+	if err != nil {
+		return err
+	}
+
+	b.indexes[dst] = Index{
+		Log: dstIdxLog,
+		Mem: srcIdx.Mem.Copy(),
+	}
 	return nil
 }
 
 func (b *Bucket) RemoveFork(name string) error {
-	// TODO: Implement.
-	return nil
+	idx, err := b.idxForConsumer(name)
+	if err != nil {
+		return err
+	}
+
+	dstPath := idxPath(b.dir, name)
+	delete(b.indexes, name)
+	return errors.Join(
+		idx.Log.Close(),
+		os.Remove(dstPath),
+	)
 }
 
 func (b *Bucket) Consumers() []string {
@@ -571,4 +596,26 @@ func (b *Bucket) Consumers() []string {
 	}
 
 	return consumers
+}
+
+func filterIsNotExist(err error) error {
+	if os.IsNotExist(err) {
+		return nil
+	}
+
+	return err
+}
+
+func removeBucketDir(dir string) error {
+	// We do this here because os.RemoveAll() is a bit more expensive,
+	// as it does some extra syscalls and some portability checks that
+	// we do not really need. Just delete them explicitly.
+	//
+	// We also don't care if the files actually existed, as long as they
+	// are gone after this function call.
+	return errors.Join(
+		filterIsNotExist(os.Remove(filepath.Join(dir, "idx.log"))),
+		filterIsNotExist(os.Remove(filepath.Join(dir, "dat.log"))),
+		filterIsNotExist(os.Remove(dir)),
+	)
 }

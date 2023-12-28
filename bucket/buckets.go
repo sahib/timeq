@@ -14,11 +14,20 @@ import (
 	"github.com/tidwall/btree"
 )
 
+// trailerKey is the key to access a index.Trailer for a certain bucket.
+// Buckets that are not loaded have some info that is easily accessible without
+// loading them fully (i.e. the len). Since the Len can be different for each
+// fork we need to keep it for each one separately.
+type trailerKey struct {
+	Key      item.Key
+	Consumer string
+}
+
 type Buckets struct {
 	mu                     sync.Mutex
 	dir                    string
 	tree                   btree.Map[item.Key, *Bucket]
-	trailers               map[item.Key]index.Trailer
+	trailers               map[trailerKey]index.Trailer
 	opts                   Options
 	maxParallelOpenBuckets int
 }
@@ -35,7 +44,7 @@ func LoadAll(dir string, maxParallelOpenBuckets int, opts Options) (*Buckets, er
 
 	var dirsHandled int
 	tree := btree.Map[item.Key, *Bucket]{}
-	trailers := make(map[item.Key]index.Trailer, len(ents))
+	trailers := make(map[trailerKey]index.Trailer, len(ents))
 	for _, ent := range ents {
 		if !ent.IsDir() {
 			continue
@@ -54,30 +63,18 @@ func LoadAll(dir string, maxParallelOpenBuckets int, opts Options) (*Buckets, er
 
 		dirsHandled++
 
-		trailer, err := index.ReadTrailer(filepath.Join(buckPath, "idx.log"))
-		if err != nil {
-			if opts.ErrorMode == ErrorModeAbort {
-				return nil, err
-			}
-
-			opts.Logger.Printf("failed to read trailer on bucket %s: %v", buckPath, err)
-			continue
+		if err := index.ReadTrailers(buckPath, func(consumer string, trailer index.Trailer) {
+			// nil entries indicate buckets that were not loaded yet:
+			trailers[trailerKey{
+				Key:      key,
+				Consumer: consumer,
+			}] = trailer
+		}); err != nil {
+			// reading trailers is not too fatal, but applications may break in unexpected
+			// ways when Len() returns wrong results.
+			return nil, err
 		}
 
-		if trailer.TotalEntries == 0 {
-			// It's an empty bucket. Delete it.
-			// Empty means that it contains no or only deleted elements.
-			if err := os.RemoveAll(buckPath); err != nil {
-				if opts.ErrorMode == ErrorModeAbort {
-					return nil, err
-				}
-
-				opts.Logger.Printf("failed to remove old bucket: %v", err)
-			}
-		}
-
-		// nil entries indicate buckets that were not loaded yet:
-		trailers[key] = trailer
 		tree.Set(key, nil)
 	}
 
@@ -150,19 +147,27 @@ func (bs *Buckets) delete(key item.Key) error {
 		return fmt.Errorf("no bucket with key %v", key)
 	}
 
-	delete(bs.trailers, key)
+	for tk := range bs.trailers {
+		if tk.Key == key {
+			delete(bs.trailers, tk)
+		}
+	}
 
 	var err error
+	var dir string
 	if buck != nil {
 		// make sure to close the bucket, otherwise we will accumulate mmaps, which
 		// will sooner or later lead to memory allocation issues/errors.
 		err = buck.Close()
+		dir = buck.dir // save on allocation of buckPath()
+	} else {
+		dir = bs.buckPath(key)
 	}
 
 	bs.tree.Delete(key)
 	return errors.Join(
 		err,
-		os.RemoveAll(bs.buckPath(key)),
+		removeBucketDir(dir),
 	)
 }
 
@@ -284,7 +289,11 @@ func (bs *Buckets) Len(consumer string) (int, error) {
 
 	_ = bs.iter(IncludeNil, func(key item.Key, b *Bucket) error {
 		if b == nil {
-			trailer, ok := bs.trailers[key]
+			trailer, ok := bs.trailers[trailerKey{
+				Key:      key,
+				Consumer: consumer,
+			}]
+
 			if !ok {
 				bs.opts.Logger.Printf("bug: no trailer for %v", key)
 				return nil
@@ -330,7 +339,8 @@ func (bs *Buckets) Shovel(dstBs *Buckets) (int, error) {
 			}
 
 			ntotalcopied += int(trailer.TotalEntries)
-			dstBs.trailers[key] = trailer
+			// TODO: figure this out. This needs
+			// dstBs.trailers[key] = trailer
 
 			return moveFileOrDir(srcPath, dstPath)
 		}
@@ -641,6 +651,11 @@ func (bs *Buckets) DeleteLowerThan(consumer string, key item.Key) (int, error) {
 	return numDeleted, nil
 }
 
+func (bs *Buckets) Fork(consumer string) error {
+	return bs.iter(Load, func(key item.Key, buck *Bucket) error {
+	})
+}
+
 func (bs *Buckets) RemoveFork(consumer string) error {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
@@ -650,6 +665,8 @@ func (bs *Buckets) RemoveFork(consumer string) error {
 			return buck.RemoveFork(consumer)
 		}
 
+		// Quick path: bucket was not loaded, so we can just throw out
+		// the to-be-removed index file:
 		buckDir := filepath.Join(bs.dir, key.String())
 		return os.Remove(idxPath(buckDir, consumer))
 	})

@@ -142,6 +142,7 @@ is memory mapped, it's a safety mechanism not to clean up keys directly after
   The bigger the log, the bigger the pre-allocation.
 * Sorting into buckets during `Push()` uses binary search for fast sorting.
 * `Shovel()` can move whole bucket directories, if possible.
+* In general, machine empathy was applied to some extent to make the code cache friendly.
 
 ## FAQ:
 
@@ -157,7 +158,7 @@ of the existing benchmarks to test your assumptions.
 ### Why should I care about buckets?
 
 Most importantly: Only buckets are loaded which are being in use.
-This allows a very small footprint, especially if the push intput is already roughly sorted.
+This allows a very small footprint, especially if the push input is already roughly sorted.
 
 There are also some other reasons:
 

@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/sahib/timeq/item"
 )
@@ -51,6 +53,35 @@ func (fi *Reader) Next(loc *item.Location) bool {
 
 func (fi *Reader) Err() error {
 	return fi.err
+}
+
+func ConsumerNameFromBasename(name string) string {
+	consumerName := strings.TrimSuffix(name, "idx.log")
+	return strings.TrimSuffix(consumerName, ".")
+}
+
+func ReadTrailers(dir string, fn func(consumerName string, trailer Trailer)) error {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+
+	for _, ent := range ents {
+		name := ent.Name()
+		if !strings.HasSuffix(name, "idx.log") {
+			continue
+		}
+
+		path := filepath.Join(dir, name)
+		trailer, err := ReadTrailer(path)
+		if err != nil {
+			return err
+		}
+
+		fn(ConsumerNameFromBasename(name), trailer)
+	}
+
+	return nil
 }
 
 // ReadTrailer reads the trailer of the index log.
