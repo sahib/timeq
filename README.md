@@ -248,3 +248,9 @@ Those need to be resolved before tagging a version 1.0.
 - [x] Document thread safety rules
 - [ ] Improve test coverage / extend test suite / test for race conditions
 - [ ] Profile and optimize a bit more, if possible.
+
+- [ ] Check for integer overflows.
+- [ ] Make use of rename.io where appropiate (?)
+- [ ] Improve README - add forking idea.
+- [ ] Make shovel a method and make it play nice with consumers.
+

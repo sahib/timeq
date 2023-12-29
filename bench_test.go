@@ -164,7 +164,7 @@ func BenchmarkShovel(b *testing.B) {
 	for run := 0; run < b.N; run++ {
 		require.NoError(b, srcQueue.Push(testutils.GenItems(0, 2000, 1)))
 		b.StartTimer()
-		_, err := Shovel(srcQueue, dstQueue)
+		_, err := srcQueue.Shovel(dstQueue)
 		require.NoError(b, err)
 		b.StopTimer()
 		require.NoError(b, dstQueue.Clear())

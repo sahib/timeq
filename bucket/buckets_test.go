@@ -29,9 +29,11 @@ func TestBucketsOpenEmpty(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
-	bs, err := LoadAll(dir, 1, DefaultOptions())
+	opts := DefaultOptions()
+	opts.MaxParallelOpenBuckets = 1
+	bs, err := LoadAll(dir, opts)
 	require.NoError(t, err)
-	require.Equal(t, 0, bs.Len())
+	require.Equal(t, 0, bs.Len(""))
 	require.NoError(t, bs.Sync())
 	require.NoError(t, bs.Close())
 }
@@ -43,7 +45,9 @@ func TestBucketsClearEmpty(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
-	bs, err := LoadAll(dir, 1, DefaultOptions())
+	opts := DefaultOptions()
+	opts.MaxParallelOpenBuckets = 1
+	bs, err := LoadAll(dir, opts)
 	require.NoError(t, err)
 	require.NoError(t, bs.Clear())
 	require.NoError(t, bs.Close())
@@ -66,7 +70,9 @@ func TestBucketsIter(t *testing.T) {
 		)
 	}
 
-	bs, err := LoadAll(dir, 1, DefaultOptions())
+	opts := DefaultOptions()
+	opts.MaxParallelOpenBuckets = 1
+	bs, err := LoadAll(dir, opts)
 	require.NoError(t, err)
 
 	// load bucket 80 early to check if iter can handle
@@ -82,7 +88,7 @@ func TestBucketsIter(t *testing.T) {
 	}))
 
 	require.Equal(t, expected, got)
-	require.Equal(t, 40, bs.Len())
+	require.Equal(t, 40, bs.Len(""))
 }
 
 func TestBucketsForKey(t *testing.T) {
@@ -93,7 +99,10 @@ func TestBucketsForKey(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	writeDummyBucket(t, dir, 33, testutils.GenItems(0, 10, 1))
-	bs, err := LoadAll(dir, 1, DefaultOptions())
+
+	opts := DefaultOptions()
+	opts.MaxParallelOpenBuckets = 1
+	bs, err := LoadAll(dir, opts)
 	require.NoError(t, err)
 
 	// open freshly:
@@ -111,7 +120,7 @@ func TestBucketsForKey(t *testing.T) {
 	b3, err := bs.forKey(33)
 	require.NoError(t, err)
 	require.Equal(t, item.Key(33), b3.Key())
-	require.Equal(t, 10, b3.Len())
+	require.Equal(t, 10, b3.Len(""))
 
 	require.NoError(t, bs.Clear())
 
@@ -120,7 +129,7 @@ func TestBucketsForKey(t *testing.T) {
 	b3c, err := bs.forKey(33)
 	require.NoError(t, err)
 	require.Equal(t, item.Key(33), b3c.Key())
-	require.Equal(t, 0, b3c.Len())
+	require.Equal(t, 0, b3c.Len(""))
 	require.NoError(t, bs.Close())
 }
 
@@ -134,7 +143,9 @@ func TestBucketsValidateFunc(t *testing.T) {
 	writeDummyBucket(t, dir, 30, testutils.GenItems(30, 40, 1))
 	writeDummyBucket(t, dir, 50, testutils.GenItems(50, 60, 1))
 
-	bs, err := LoadAll(dir, 1, DefaultOptions())
+	opts := DefaultOptions()
+	opts.MaxParallelOpenBuckets = 1
+	bs, err := LoadAll(dir, opts)
 	require.NoError(t, err)
 
 	require.NoError(t, bs.ValidateBucketKeys(func(key item.Key) item.Key {
@@ -161,7 +172,9 @@ func TestBucketsDelete(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
-	bs, err := LoadAll(dir, 1, DefaultOptions())
+	opts := DefaultOptions()
+	opts.MaxParallelOpenBuckets = 1
+	bs, err := LoadAll(dir, opts)
 	require.NoError(t, err)
 
 	// Delete non-existing yet.
@@ -190,7 +203,9 @@ func TestBucketsNotEmptyDir(t *testing.T) {
 	// Loading such a dir should error out as it seems that we try to open a directory with other things
 	// in it that are not buckets at all. The caller can prepare this by having a os.Remove() of the contents,
 	// but we should not do this automatically.
-	_, err = LoadAll(dir, 1, DefaultOptions())
+	opts := DefaultOptions()
+	opts.MaxParallelOpenBuckets = 1
+	_, err = LoadAll(dir, opts)
 	require.Error(t, err)
 }
 

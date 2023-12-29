@@ -249,7 +249,7 @@ func handleShovel(ctx *cli.Context, srcQueue *timeq.Queue) error {
 		return err
 	}
 
-	nShoveled, err := timeq.Shovel(srcQueue, dstQueue)
+	nShoveled, err := srcQueue.Shovel(dstQueue)
 	if err != nil {
 		return errors.Join(err, dstQueue.Close())
 	}

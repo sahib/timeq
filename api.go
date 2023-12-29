@@ -60,7 +60,7 @@ func Open(dir string, opts Options) (*Queue, error) {
 		return nil, err
 	}
 
-	bs, err := bucket.LoadAll(dir, opts.MaxParallelOpenBuckets, opts)
+	bs, err := bucket.LoadAll(dir, opts)
 	if err != nil {
 		return nil, fmt.Errorf("buckets: %w", err)
 	}
@@ -118,8 +118,7 @@ func (q *Queue) DeleteLowerThan(key Key) (int, error) {
 // NOTE: This gets more expensive when you have a higher number of buckets,
 // so you probably should not call that in a hot loop.
 func (q *Queue) Len() int {
-	ln, _ := q.buckets.Len("")
-	return ln
+	return q.buckets.Len("")
 }
 
 // Sync can be called to explicitly sync the queue contents
@@ -133,71 +132,6 @@ func (q *Queue) Clear() error {
 	return q.buckets.Clear()
 }
 
-// Close should always be called and error checked when you're done
-// with using the queue. Close might still flush out some data, depending
-// on what sync mode you configured.
-func (q *Queue) Close() error {
-	return q.buckets.Close()
-}
-
-type Consumer interface {
-	Pop(n int, dst Items, fn ReadFn) error
-	Peek(n int, dst Items, fn ReadFn) error
-	Move(n int, dst Items, dstQueue *Queue, fn ReadFn) error
-	DeleteLowerThan(key Key) (int, error)
-	Len() int
-
-	// TODO: Shovel()?
-}
-
-type Fork interface {
-	Consumer
-	Remove() error
-	Fork(name string) error
-}
-
-type consumer struct {
-	name string
-	q    *Queue
-}
-
-// Check that Queue also implements the Consumer interface.
-var _ Consumer = &Queue{}
-
-// TODO: register consumers here lazily on first use.
-
-func (c *consumer) Pop(n int, dst Items, fn ReadFn) error {
-	return c.q.buckets.Read(bucket.ReadOpPop, n, dst, c.name, fn, nil)
-}
-func (c *consumer) Peek(n int, dst Items, fn ReadFn) error {
-	return c.q.buckets.Read(bucket.ReadOpPeek, n, dst, c.name, fn, nil)
-}
-func (c *consumer) Move(n int, dst Items, dstQueue *Queue, fn ReadFn) error {
-	return c.q.buckets.Read(bucket.ReadOpMove, n, dst, c.name, fn, dstQueue.buckets)
-}
-func (c *consumer) Len() int {
-	// ignore the error, as it can only happen with bad consumer name.
-	ln, _ := c.q.buckets.Len(c.name)
-	return ln
-}
-
-func (c *consumer) DeleteLowerThan(key Key) (int, error) {
-	return c.q.buckets.DeleteLowerThan(c.name, key)
-}
-
-// Remove removes this fork. The consumer should not be used afterwards anymore.
-func (c *consumer) Remove() error {
-	return c.q.buckets.RemoveFork(c.name)
-}
-
-func (q *Queue) Fork(name string) (Consumer, error) {
-	return &consumer{name: name, q: q}, nil
-}
-
-func (q *Queue) Forks() []string {
-	return nil
-}
-
 // Shovel moves items from `src` to `dst`. The `src` queue will be completely drained
 // afterwards. For speed reasons this assume that the dst queue uses the same bucket func
 // as the source queue. If you cannot guarantee this, you should implement a naive Shovel()
@@ -207,6 +141,76 @@ func (q *Queue) Forks() []string {
 // intend to have more than one queue that are connected by some logic. Examples for the
 // latter case would be a "deadletter queue" where you put failed calculations for later
 // re-calculations or a queue for unacknowledged items.
-func Shovel(src, dst *Queue) (int, error) {
-	return src.buckets.Shovel(dst.buckets)
+func (q *Queue) Shovel(dst *Queue) (int, error) {
+	return q.buckets.Shovel(dst.buckets, "")
+}
+
+func (q *Queue) Fork(name string) (Consumer, error) {
+	return &fork{name: name, q: q}, nil
+}
+
+func (q *Queue) Forks() ([]string, error) {
+	return q.buckets.Forks()
+}
+
+// Close should always be called and error checked when you're done
+// with using the queue. Close might still flush out some data, depending
+// on what sync mode you configured.
+func (q *Queue) Close() error {
+	return q.buckets.Close()
+}
+
+/////////////
+
+type Consumer interface {
+	Pop(n int, dst Items, fn ReadFn) error
+	Peek(n int, dst Items, fn ReadFn) error
+	Move(n int, dst Items, dstQueue *Queue, fn ReadFn) error
+	DeleteLowerThan(key Key) (int, error)
+	Shovel(dst *Queue) (int, error)
+	Len() int
+}
+
+type Fork interface {
+	Consumer
+	Remove() error
+	Fork(name string) error
+}
+
+type fork struct {
+	name string
+	q    *Queue
+}
+
+// Check that Queue also implements the Consumer interface.
+var _ Consumer = &Queue{}
+
+func (f *fork) Pop(n int, dst Items, fn ReadFn) error {
+	return f.q.buckets.Read(bucket.ReadOpPop, n, dst, f.name, fn, nil)
+}
+
+func (f *fork) Peek(n int, dst Items, fn ReadFn) error {
+	return f.q.buckets.Read(bucket.ReadOpPeek, n, dst, f.name, fn, nil)
+}
+
+func (f *fork) Move(n int, dst Items, dstQueue *Queue, fn ReadFn) error {
+	return f.q.buckets.Read(bucket.ReadOpMove, n, dst, f.name, fn, dstQueue.buckets)
+}
+
+func (f *fork) Len() int {
+	// ignore the error, as it can only happen with bad consumer name.
+	return f.q.buckets.Len(f.name)
+}
+
+func (f *fork) DeleteLowerThan(key Key) (int, error) {
+	return f.q.buckets.DeleteLowerThan(f.name, key)
+}
+
+// Remove removes this fork. The consumer should not be used afterwards anymore.
+func (f *fork) Remove() error {
+	return f.q.buckets.RemoveFork(f.name)
+}
+
+func (f *fork) Shovel(dst *Queue) (int, error) {
+	return f.q.buckets.Shovel(dst.buckets, f.name)
 }

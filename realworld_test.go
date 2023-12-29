@@ -69,7 +69,7 @@ func shovel(t *testing.T, waiting, unacked *Queue) {
 	unackedLenBefore := unacked.Len()
 	waitingLenBefore := waiting.Len()
 
-	nshoveled, err := Shovel(unacked, waiting)
+	nshoveled, err := unacked.Shovel(waiting)
 	require.NoError(t, err)
 
 	unackedLenAfter := unacked.Len()

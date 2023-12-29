@@ -129,7 +129,7 @@ func TestAPIShovelFastPath(t *testing.T) {
 	require.Equal(t, len(exp), q1.Len())
 	require.Equal(t, 0, q2.Len())
 
-	n, err := Shovel(q1, q2)
+	n, err := q1.Shovel(q1)
 	require.NoError(t, err)
 	require.Equal(t, len(exp), n)
 
@@ -181,7 +181,7 @@ func testAPIShovelSlowPath(t *testing.T, reopen bool) {
 	require.Equal(t, len(q1Push), q1.Len())
 	require.Equal(t, len(q2Push), q2.Len())
 
-	n, err := Shovel(q1, q2)
+	n, err := q1.Shovel(q2)
 	require.NoError(t, err)
 	require.Equal(t, len(q1Push), n)
 
@@ -767,7 +767,7 @@ func TestAPIShovelMemoryUsage(t *testing.T) {
 	refFds := openfds(t)
 	refRss := rssBytes(t)
 
-	count, err := Shovel(srcQueue, dstQueue)
+	count, err := srcQueue.Shovel(dstQueue)
 	require.NoError(t, err)
 	require.Equal(t, N*N, count)
 

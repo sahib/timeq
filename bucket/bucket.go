@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"github.com/otiai10/copy"
 	"github.com/sahib/timeq/index"
 	"github.com/sahib/timeq/item"
 	"github.com/sahib/timeq/vlog"
@@ -17,18 +18,20 @@ const (
 	DataLogName = "dat.log"
 )
 
+var (
+	ErrForkExists = errors.New("fork already exists")
+)
+
 type Index struct {
 	Log *index.Writer
 	Mem *index.Index
 }
 
 type Bucket struct {
-	dir  string
-	key  item.Key
-	log  *vlog.Log
-	opts Options
-
-	// TODO: Support lazy loading indexes later on?
+	dir     string
+	key     item.Key
+	log     *vlog.Log
+	opts    Options
 	indexes map[string]Index
 }
 
@@ -61,14 +64,13 @@ func recoverIndexFromLog(opts *Options, log *vlog.Log, idxPath string) (*index.I
 		return nil, fmt.Errorf("index load failed & could not regenerate: %w", memErr)
 	}
 
-	// TODO: what is this doing?
-	// if mem.Len() > 0 {
-	// 	if err == nil {
-	// 		opts.Logger.Printf("index is empty, but log is not (%s)", idxPath)
-	// 	} else {
-	// 		opts.Logger.Printf("failed to load index %s: %v", idxPath, err)
-	// 	}
-	// }
+	if mem.Len() > 0 {
+		if memErr == nil {
+			opts.Logger.Printf("index is empty, but log is not (%s)", idxPath)
+		} else {
+			opts.Logger.Printf("failed to load index %s: %v", idxPath, memErr)
+		}
+	}
 
 	if err := os.Remove(idxPath); err != nil {
 		return nil, fmt.Errorf("index failover: could not remove broken index: %w", err)
@@ -89,7 +91,7 @@ func recoverIndexFromLog(opts *Options, log *vlog.Log, idxPath string) (*index.I
 }
 
 func idxPath(dir, consumer string) string {
-	// TODO: Do we use this logic somewhere else?
+	// If there is no consumer we use "idx.log" as file name for backwards compatibility.
 	var idxName string
 	if consumer == "" {
 		idxName = "idx.log"
@@ -188,6 +190,12 @@ func (b *Bucket) Sync(force bool) error {
 	return err
 }
 
+func (b *Bucket) Trailers(fn func(consumer string, trailer index.Trailer)) {
+	for consumer, idx := range b.indexes {
+		fn(consumer, idx.Mem.Trailer())
+	}
+}
+
 func (b *Bucket) Close() error {
 	err := b.log.Close()
 	for _, idx := range b.indexes {
@@ -205,7 +213,6 @@ func recoverMmapError(dstErr *error) {
 		*dstErr = fmt.Errorf("panic (check: enough space left / file issues): %v - trace:\n%s", recErr, string(debug.Stack()))
 	}
 }
-
 
 // Push expects pre-sorted items!
 func (b *Bucket) Push(items item.Items) (outErr error) {
@@ -345,7 +352,7 @@ func (b *Bucket) peek(n int, dst item.Items, idx *index.Index) (batchIters *vlog
 	// iteration will yield the next highest key.
 	var numAppends int
 	for numAppends < n && !(*batchIters)[0].Exhausted() {
-		var currIter *vlog.Iter = &(*batchIters)[0]
+		var currIter = &(*batchIters)[0]
 		dst = append(dst, currIter.Item())
 		numAppends++
 
@@ -511,43 +518,29 @@ func (b *Bucket) AllEmpty() bool {
 	return true
 }
 
-func (b *Bucket) Empty(consumer string) (bool, error) {
-	// TODO: Split in AllEmpty() und Empty(name)
+func (b *Bucket) Empty(consumer string) bool {
 	idx, err := b.idxForConsumer(consumer)
 	if err != nil {
-		return false, err
+		return true
 	}
 
-	return idx.Mem.Len() == 0, nil
+	return idx.Mem.Len() == 0
 }
 
 func (b *Bucket) Key() item.Key {
 	return b.key
 }
 
-func (b *Bucket) Trailer(consumer string) index.Trailer {
+func (b *Bucket) Len(consumer string) int {
 	idx, err := b.idxForConsumer(consumer)
 	if err != nil {
-		return index.Trailer{}
+		return 0
 	}
 
-	return idx.Mem.Trailer()
-}
-
-func (b *Bucket) Len(consumer string) (int, error) {
-	idx, err := b.idxForConsumer(consumer)
-	if err != nil {
-		return 0, err
-	}
-
-	return int(idx.Mem.Len()), nil
+	return int(idx.Mem.Len())
 }
 
 func (b *Bucket) Fork(src, dst string) error {
-	// TODO:
-	// 1. Copy some index (which one?!) to name.idx
-	// 2. Either return a Bucket API that uses that or make every op take a name.
-	//    (latter one would be less efficient?)
 	srcIdx, err := b.idxForConsumer(src)
 	if err != nil {
 		return err
@@ -555,7 +548,7 @@ func (b *Bucket) Fork(src, dst string) error {
 
 	// If we fork to `dst`, then dst should better not exist.
 	if _, err := b.idxForConsumer(dst); err == nil {
-		return errors.New("dst already exists")
+		return ErrForkExists
 	}
 
 	dstPath := idxPath(b.dir, dst)
@@ -575,27 +568,46 @@ func (b *Bucket) Fork(src, dst string) error {
 	return nil
 }
 
-func (b *Bucket) RemoveFork(name string) error {
-	idx, err := b.idxForConsumer(name)
+func forkOffline(buckDir, src, dst string) error {
+	srcPath := idxPath(buckDir, src)
+	dstPath := idxPath(buckDir, dst)
+	if _, err := os.Stat(dstPath); err == nil {
+		// dst already exists.
+		return ErrForkExists
+	}
+
+	opts := copy.Options{Sync: true}
+	return copy.Copy(srcPath, dstPath, opts)
+}
+
+func (b *Bucket) RemoveFork(consumer string) error {
+	idx, err := b.idxForConsumer(consumer)
 	if err != nil {
 		return err
 	}
 
-	dstPath := idxPath(b.dir, name)
-	delete(b.indexes, name)
+	dstPath := idxPath(b.dir, consumer)
+	delete(b.indexes, consumer)
 	return errors.Join(
 		idx.Log.Close(),
 		os.Remove(dstPath),
 	)
 }
 
-func (b *Bucket) Consumers() []string {
-	consumers := make([]string, 0, len(b.indexes))
+// like RemoveFork() but used when the bucket is not loaded.
+func removeForkOffline(buckDir, consumer string) error {
+	// Quick path: bucket was not loaded, so we can just throw out
+	// the to-be-removed index file:
+	return os.Remove(idxPath(buckDir, consumer))
+}
+
+func (b *Bucket) Forks() []string {
+	forks := make([]string, 0, len(b.indexes))
 	for consumer := range b.indexes {
-		consumers = append(consumers, consumer)
+		forks = append(forks, consumer)
 	}
 
-	return consumers
+	return forks
 }
 
 func filterIsNotExist(err error) error {

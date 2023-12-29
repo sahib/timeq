@@ -24,15 +24,14 @@ type trailerKey struct {
 }
 
 type Buckets struct {
-	mu                     sync.Mutex
-	dir                    string
-	tree                   btree.Map[item.Key, *Bucket]
-	trailers               map[trailerKey]index.Trailer
-	opts                   Options
-	maxParallelOpenBuckets int
+	mu       sync.Mutex
+	dir      string
+	tree     btree.Map[item.Key, *Bucket]
+	trailers map[trailerKey]index.Trailer
+	opts     Options
 }
 
-func LoadAll(dir string, maxParallelOpenBuckets int, opts Options) (*Buckets, error) {
+func LoadAll(dir string, opts Options) (*Buckets, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("mkdir: %w", err)
 	}
@@ -83,11 +82,10 @@ func LoadAll(dir string, maxParallelOpenBuckets int, opts Options) (*Buckets, er
 	}
 
 	return &Buckets{
-		dir:                    dir,
-		tree:                   tree,
-		opts:                   opts,
-		trailers:               trailers,
-		maxParallelOpenBuckets: maxParallelOpenBuckets,
+		dir:      dir,
+		tree:     tree,
+		opts:     opts,
+		trailers: trailers,
 	}, nil
 }
 
@@ -127,7 +125,7 @@ func (bs *Buckets) forKey(key item.Key) (*Bucket, error) {
 	}
 
 	// make room for one so we don't jump over the maximum:
-	if err := bs.closeUnused(bs.maxParallelOpenBuckets - 1); err != nil {
+	if err := bs.closeUnused(bs.opts.MaxParallelOpenBuckets - 1); err != nil {
 		return nil, err
 	}
 
@@ -275,14 +273,11 @@ func (bs *Buckets) Close() error {
 	defer bs.mu.Unlock()
 
 	return bs.iter(LoadedOnly, func(_ item.Key, b *Bucket) error {
-		// TODO: We need to store trailer info for all known consumers here.
-		//       On fork we also need to copy it.
-		// bs.trailers[b.Key()] = b.idx.Trailer()
 		return b.Close()
 	})
 }
 
-func (bs *Buckets) Len(consumer string) (int, error) {
+func (bs *Buckets) Len(consumer string) int {
 	var len int
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
@@ -303,20 +298,14 @@ func (bs *Buckets) Len(consumer string) (int, error) {
 			return nil
 		}
 
-		blen, err := b.Len(consumer)
-		if err != nil {
-			return err
-		}
-
-		len += blen
+		len += b.Len(consumer)
 		return nil
 	})
 
-	return len, nil
+	return len
 }
 
-// TODO: Figure out how shovel and multi-consumer mode works together...
-func (bs *Buckets) Shovel(dstBs *Buckets) (int, error) {
+func (bs *Buckets) Shovel(dstBs *Buckets, consumer string) (int, error) {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 
@@ -333,14 +322,18 @@ func (bs *Buckets) Shovel(dstBs *Buckets) (int, error) {
 			srcPath := bs.buckPath(key)
 			dstBs.tree.Set(key, nil)
 
-			trailer, err := index.ReadTrailer(filepath.Join(srcPath, "idx.log"))
-			if err != nil {
+			if err := index.ReadTrailers(srcPath, func(srcConsumer string, trailer index.Trailer) {
+				if consumer == srcConsumer {
+					ntotalcopied += int(trailer.TotalEntries)
+				}
+
+				dstBs.trailers[trailerKey{
+					Key:      key,
+					Consumer: srcConsumer,
+				}] = trailer
+			}); err != nil {
 				return err
 			}
-
-			ntotalcopied += int(trailer.TotalEntries)
-			// TODO: figure this out. This needs
-			// dstBs.trailers[key] = trailer
 
 			return moveFileOrDir(srcPath, dstPath)
 		}
@@ -359,9 +352,7 @@ func (bs *Buckets) Shovel(dstBs *Buckets) (int, error) {
 			return err
 		}
 
-		// TODO: Specifying a single consumer here does not work well. Do we have to copy all consumers then?
-		// Or should we skip the directory move?
-		_, ncopied, err := srcBuck.Move(math.MaxInt, buf[:0], dstBuck, "")
+		_, ncopied, err := srcBuck.Move(math.MaxInt, buf[:0], dstBuck, consumer)
 		ntotalcopied += ncopied
 
 		return err
@@ -439,7 +430,15 @@ func (bs *Buckets) closeUnused(maxBucks int) error {
 			continue
 		}
 
-		// TODO: Store all trailers here.
+		// We need to store the trailers of each fork, so we know how to
+		// calculcate the length of the queue without having to load everything.
+		bucket.Trailers(func(consumer string, trailer index.Trailer) {
+			bs.trailers[trailerKey{
+				Key:      key,
+				Consumer: consumer,
+			}] = trailer
+		})
+
 		// trailer := bucket.idx.Trailer()
 		if err := bucket.Close(); err != nil {
 			switch bs.opts.ErrorMode {
@@ -651,8 +650,14 @@ func (bs *Buckets) DeleteLowerThan(consumer string, key item.Key) (int, error) {
 	return numDeleted, nil
 }
 
-func (bs *Buckets) Fork(consumer string) error {
-	return bs.iter(Load, func(key item.Key, buck *Bucket) error {
+func (bs *Buckets) Fork(src, dst string) error {
+	return bs.iter(IncludeNil, func(key item.Key, buck *Bucket) error {
+		if buck != nil {
+			return buck.Fork(src, dst)
+		}
+
+		buckDir := filepath.Join(bs.dir, key.String())
+		return forkOffline(buckDir, src, dst)
 	})
 }
 
@@ -665,9 +670,40 @@ func (bs *Buckets) RemoveFork(consumer string) error {
 			return buck.RemoveFork(consumer)
 		}
 
-		// Quick path: bucket was not loaded, so we can just throw out
-		// the to-be-removed index file:
 		buckDir := filepath.Join(bs.dir, key.String())
-		return os.Remove(idxPath(buckDir, consumer))
+		return removeForkOffline(buckDir, consumer)
 	})
+}
+
+func (bs *Buckets) Forks() ([]string, error) {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+
+	var buck *Bucket
+	for iter := bs.tree.Iter(); iter.Next(); {
+		buck = iter.Value()
+		if buck == nil {
+			continue
+		}
+	}
+
+	if buck == nil {
+		// if no bucket was loaded yet, above for will not find any.
+		// no luck, we gonna need to load one for this operation.
+		iter := bs.tree.Iter()
+		if iter.First() {
+			var err error
+			buck, err = bs.forKey(iter.Key())
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if buck == nil {
+		// still nil? The tree is probably empty.
+		return []string{}, nil
+	}
+
+	return buck.Forks(), nil
 }
