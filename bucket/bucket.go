@@ -102,6 +102,26 @@ func idxPath(dir, consumer string) string {
 	return filepath.Join(dir, idxName)
 }
 
+func loadIndex(idxPath string, log *vlog.Log, opts Options) (Index, error) {
+	mem, err := index.Load(idxPath)
+	if err != nil || (mem.NEntries() == 0 && !log.IsEmpty()) {
+		mem, err = recoverIndexFromLog(&opts, log, idxPath)
+		if err != nil {
+			return Index{}, err
+		}
+	}
+
+	idxLog, err := index.NewWriter(idxPath, opts.SyncMode&SyncIndex > 0)
+	if err != nil {
+		return Index{}, fmt.Errorf("index writer: %w", err)
+	}
+
+	return Index{
+		Log: idxLog,
+		Mem: mem,
+	}, nil
+}
+
 func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
@@ -140,6 +160,8 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 	}
 
 	indexes := make(map[string]Index, len(idxEnts)-1)
+
+	var defaultIndexFound bool
 	for _, idxEnt := range idxEnts {
 		idxName := idxEnt.Name()
 		if !strings.HasSuffix(idxName, "idx.log") {
@@ -147,24 +169,27 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 			continue
 		}
 
+		if idxName == "idx.log" {
+			defaultIndexFound = true
+		}
+
 		idxPath := filepath.Join(dir, idxName)
-		idx, err := index.Load(idxPath)
-		if err != nil || (idx.NEntries() == 0 && !log.IsEmpty()) {
-			idx, err = recoverIndexFromLog(&opts, log, idxPath)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		idxLog, err := index.NewWriter(idxPath, opts.SyncMode&SyncIndex > 0)
+		idx, err := loadIndex(idxPath, log, opts)
 		if err != nil {
-			return nil, fmt.Errorf("index writer: %w", err)
+			return nil, err
 		}
 
-		indexes[index.ConsumerNameFromBasename(idxName)] = Index{
-			Log: idxLog,
-			Mem: idx,
+		indexes[index.ConsumerNameFromBasename(idxName)] = idx
+	}
+
+	if !defaultIndexFound {
+		idxPath := filepath.Join(dir, "idx.log")
+		idx, err := loadIndex(idxPath, log, opts)
+		if err != nil {
+			return nil, err
 		}
+
+		indexes[""] = idx
 	}
 
 	key, err := item.KeyFromString(filepath.Base(dir))

@@ -129,7 +129,7 @@ func TestAPIShovelFastPath(t *testing.T) {
 	require.Equal(t, len(exp), q1.Len())
 	require.Equal(t, 0, q2.Len())
 
-	n, err := q1.Shovel(q1)
+	n, err := q1.Shovel(q2)
 	require.NoError(t, err)
 	require.Equal(t, len(exp), n)
 
