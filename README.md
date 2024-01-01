@@ -15,6 +15,7 @@ A file-based priority queue in Go.
 - Tiny memory footprint that does not depend on the number of items in the queue.
 - Simple interface with classic `Push()` and `Pop()` and only few other functions.
 - Configurable durability behavior.
+- Multi-consumer via forking (experimental; see below)
 
 This implementation should be generally useful, despite the ``time`` in the name.
 However, the initial design had timestamps as priority keys in mind. For best
@@ -31,15 +32,22 @@ performance the following assumptions were made:
 If some of those assumptions do not fit your use case and you still managed to make it work,
 I would be happy for some feedback or even pull requests to improve the general usability.
 
-## Usecase
+## Use cases
 
-My primary usecase was a embedded linux device that has different services that generate
+My primary use case was a embedded Linux device that has different services that generate
 a stream of data that needs to be send to the cloud. For this the data was required to be
 in ascending order (sorted by time) and also needed to be buffered with tight memory boundaries.
 
-A previous attempt with ``sqlite3`` did work kinda well but was much slower
-than it had to be (also due to the heavy cost of ``cgo``). This motivated me to
+A previous attempt based on``sqlite3`` did work kinda well but was much slower
+than it had to be (partly also due to the heavy cost of ``cgo``). This motivated me to
 write this queue implementation.
+
+In general, `timeq` can be used to implement these and more:
+
+- A streaming platform like [NATS](https://nats.io) or message brokers similar to [Mosquitto](https://mosquitto.org)
+- A file-backend job queue with different priorities.
+- A telemetry pipeline for IoT devices to buffer offline data.
+- ...
 
 ## Usage
 
@@ -49,7 +57,7 @@ To download the library, just do this in your project:
 $ go get github.com/sahib/timeq@latest
 ```
 
-We also ship a very minimal command-line client that can be used for experiments.
+We also ship a rudimentary command-line client that can be used for experiments.
 You can install it like this:
 
 ```bash
@@ -75,6 +83,30 @@ BenchmarkPushSyncData-16     	  20630	    58613 ns/op	     72 B/op	      2 alloc
 BenchmarkPushSyncIndex-16    	  20684	    58782 ns/op	     72 B/op	      2 allocs/op
 BenchmarkPushSyncFull-16     	  19994	    59491 ns/op	     72 B/op	      2 allocs/op
 ```
+
+## Multi Consumer
+
+`timeq` supports a `Fork()` operation that splits the consuming end of a queue in two halves.
+You can then consume from each of the halves individually, without modifying the state of the other one.
+This is probably best explained by my beautiful (sic!) handwriting:
+
+![Fork](docs/fork.png)
+
+1. The initial state of the queue with 10 items in it,
+2. We fork the queue by calling `Fork("foo")`.
+3. We consume 5 items from the fork via `fork.Pop()`.
+4. Pushing new data will go to all existing forks.
+
+This is implemented efficiently (see below) by just having duplicated indexes.
+It open some interesting use cases:
+
+- For load-balancing purposes you could have several workers consuming data from `timeq`, each `Pop()`'ing
+  and working on different parts of the queue. Sometimes it would be nice to let workers work on the same
+  set of data (e.g. when they all transform the data in different ways). The latter is easily possibly with forks.
+- Fork the queue and consume from it until some point as experiment and remove the fork afterwards. The original
+  data is not affected by this.
+- Prevent data from data getting lost by keeping a "deadletter" fork that keeps track of whatever you want. This way
+  you can implement something like a `max-age` of queue's items.
 
 ## Design
 
@@ -115,17 +147,24 @@ Example: If you have two buckets, your data looks like this on this:
 /path/to/db/
 ├── K00000000000000000001
 │   ├── dat.log
-│   └── idx.log
+│   ├── idx.log
+│   └── forkx.idx.log
 └── K00000000000000000002
     ├── dat.log
-    └── idx.log
+    ├── idx.log
+    └── forkx.idx.log
 ```
 
+The actual data is in `dat.log`. This is an append-only log that is
+memory-mapped by `timeq`. All files that end with `idx.log` are indexes, that
+point to the currently reachable parts of `dat.log`. Each entry in `idx.log` is
+a batch, so the log will only increase marginally if your batches are big
+enough. `forkx.idx.log` (and possibly more files like that) are index forks,
+which work the same way as `idx.log`, but track a different state of the queue.
 
-NOTE: Buckets get only cleaned up on re-open. Both ``idx.log`` and ``dat.log``
-are append-only, so old entries simply get marked as deleted. Since the content
-is memory mapped, it's a safety mechanism not to clean up keys directly after
-`Push` or `Pop`since this might kill the mapped memory.
+NOTE: Buckets get cleaned up on open or when completely empty during
+consumption. Do not expect that the disk usage automatically decreases whenever
+you pop something.
 
 ### Applied Optimizations
 
@@ -142,7 +181,7 @@ is memory mapped, it's a safety mechanism not to clean up keys directly after
   The bigger the log, the bigger the pre-allocation.
 * Sorting into buckets during `Push()` uses binary search for fast sorting.
 * `Shovel()` can move whole bucket directories, if possible.
-* In general, machine empathy was applied to some extent to make the code cache friendly.
+* In general, the concept of »Mechanical Sympathy« was applied to some extent to make the code cache friendly.
 
 ## FAQ:
 
@@ -164,19 +203,20 @@ There are also some other reasons:
 
 * If one bucket becomes corrupt for some reason, you loose only the data in this bucket.
 * On ``Shovel()`` we can cheaply move buckets if they do not exist in the destination.
+* ...and some more optimizations.
 
 ### How do I choose the right size of my buckets?
 
-It depends on a few things:
+It depends on a few things. Answer the following questions in a worst case scenario:
 
 - How much memory do you have at hand?
-- In the worst case, how many items would you push to a single bucket?
+- How many items would you push to a single bucket?
 - How big is each item?
 - How many buckets should be open at the same time?
 
 As `timeq` uses `mmap(2)` internally, only the pages that were accessed are
 actually mapped to physical memory. However when pushing a lot of data this is
-mapped to physical memory as all accessed pages of a bucket stay open (which is
+mapped to physical memory, as all accessed pages of a bucket stay open (which is
 good if you Pop immediately after). So you should be fine if this evaluates to true:
 
 `BytesPerItem * ItemsPerBucketInWorstCase * MaxOpenParallelBuckets < BytesMemoryAvailable - WiggleRoom`.
@@ -191,9 +231,9 @@ for such an optimization would be rather small though.
 ### Can I store more than one value per key?
 
 Yes, no problem. The index may store more than one batch per key. There is a
-slight allocation overhead on ``Queue.Push()`` though. Since ``timeq``
-was mostly optimized for mostly-unique keys (i.e. timestamps) you might see
-better performance with less duplicates.
+slight allocation overhead on ``Queue.Push()`` though. Since ``timeq`` was
+mostly optimized for mostly-unique keys (i.e. timestamps) you might see better
+performance with less duplicates.
 
 If you want to use priority keys that are in a very narrow range (thus many
 duplicates) then you can think about spreading the range a bit wider.
@@ -204,25 +244,23 @@ and shift the priority: ``(prio << 32) | jobID``.
 
 ### How failsafe is ``timeq``?
 
-Time will tell. I intend to use it on a big fleet of embedded devices in the
-field. Design wise, damaged index files can be regenerated from the data log.
-There's no error correction code applied in the data log and no checksums are
-currently written. If you need this, I'm happy if a PR comes in that enables it
-as option.
+Time will tell. I use it on a big fleet of embedded devices in the field, so
+it's already a bit battle tested. Design wise, damaged index files can be
+regenerated from the data log. There's no error correction code applied in the
+data log and no checksums are currently written. If you need this, I'm happy if
+a PR comes in that enables it optionally.
 
 For durability, the design is build to survive crashes without data loss (Push,
 Pop) but, in some cases, with duplicated data (Shovel). This assumes a filesystem
 with full journaling (``data=journal`` for ext4) or some other filesystem that gives
 your similar guarantees. At this point, this was not really tested in the wild yet.
-My recommendation is designing your application logic in a way that allows duplicate
-items to be handled gracefully.
+My recommendation is **designing your application logic in a way that allows duplicate
+items to be handled gracefully**.
 
 The test suite is currently roughly as big as the codebase. The best protection
 against bugs is a small code base though, so that's not too impressive yet.
-We're working on improving the testsuite (which is a never ending task). The
-actual coverage is higher than what is shown in `make test` since most
-higher-level tests also test lower-level functionality. Additionally we have a
-bunch of benchmarks and fuzzing tests.
+We're working on improving the testsuite, which is a never ending task.
+Additionally we have a bunch of benchmarks and fuzzing tests.
 
 ### Is `timeq` safely usable from several go-routines?
 
@@ -238,8 +276,6 @@ Chris Pahl [@sahib](https://github.com/sahib)
 
 ## TODO List
 
-Those need to be resolved before tagging a version 1.0.
-
 - [x] Add fuzzing test for Push/Pop
 - [x] Use a configurable logger for warnings
 - [x] We crash currently when running out of space.
@@ -248,9 +284,7 @@ Those need to be resolved before tagging a version 1.0.
 - [x] Document thread safety rules
 - [ ] Improve test coverage / extend test suite / test for race conditions
 - [ ] Profile and optimize a bit more, if possible.
-
 - [ ] Check for integer overflows.
 - [ ] Make use of rename.io where appropiate (?)
 - [ ] Improve README - add forking idea.
 - [ ] Make shovel a method and make it play nice with consumers.
-
