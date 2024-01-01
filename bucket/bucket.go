@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
-	"strings"
+	"unicode"
 
 	"github.com/otiai10/copy"
 	"github.com/sahib/timeq/index"
@@ -22,6 +22,23 @@ var (
 	ErrForkExists = errors.New("fork already exists")
 )
 
+type ForkName string
+
+func (name ForkName) Validate() error {
+	if name == "" {
+		return errors.New("empty string not allowed as fork name")
+	}
+
+	for pos, rn := range []rune(name) {
+		ok := unicode.IsUpper(rn) || unicode.IsLower(rn) || unicode.IsDigit(rn) || rn == '-'
+		if !ok {
+			return fmt.Errorf("invalid fork name at pos %d: %v (allowed: [a-Z0-9-])", pos, rn)
+		}
+	}
+
+	return nil
+}
+
 type Index struct {
 	Log *index.Writer
 	Mem *index.Index
@@ -32,17 +49,17 @@ type Bucket struct {
 	key     item.Key
 	log     *vlog.Log
 	opts    Options
-	indexes map[string]Index
+	indexes map[ForkName]Index
 }
 
 var (
-	ErrNoSuchConsumer = errors.New("no consumer with that name")
+	ErrNoSuchFork = errors.New("no fork with this name")
 )
 
-func (b *Bucket) idxForConsumer(consumer string) (Index, error) {
-	idx, ok := b.indexes[consumer]
+func (b *Bucket) idxForFork(fork ForkName) (Index, error) {
+	idx, ok := b.indexes[fork]
 	if !ok {
-		return idx, ErrNoSuchConsumer
+		return idx, ErrNoSuchFork
 	}
 
 	return idx, nil
@@ -90,13 +107,13 @@ func recoverIndexFromLog(opts *Options, log *vlog.Log, idxPath string) (*index.I
 	return mem, nil
 }
 
-func idxPath(dir, consumer string) string {
-	// If there is no consumer we use "idx.log" as file name for backwards compatibility.
+func idxPath(dir string, fork ForkName) string {
+	// If there is no fork we use "idx.log" as file name for backwards compatibility.
 	var idxName string
-	if consumer == "" {
+	if fork == "" {
 		idxName = "idx.log"
 	} else {
-		idxName = consumer + ".idx.log"
+		idxName = string(fork) + ".idx.log"
 	}
 
 	return filepath.Join(dir, idxName)
@@ -122,7 +139,7 @@ func loadIndex(idxPath string, log *vlog.Log, opts Options) (Index, error) {
 	}, nil
 }
 
-func Open(dir string, opts Options) (buck *Bucket, outErr error) {
+func Open(dir string, forks []ForkName, opts Options) (buck *Bucket, outErr error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
@@ -154,42 +171,19 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 		return nil, fmt.Errorf("open: %w", err)
 	}
 
-	idxEnts, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
+	forks = append(forks, "")
+	indexes := make(map[ForkName]Index, len(forks)-1)
 
-	indexes := make(map[string]Index, len(idxEnts)-1)
-
-	var defaultIndexFound bool
-	for _, idxEnt := range idxEnts {
-		idxName := idxEnt.Name()
-		if !strings.HasSuffix(idxName, "idx.log") {
-			// not a index file.
-			continue
-		}
-
-		if idxName == "idx.log" {
-			defaultIndexFound = true
-		}
-
-		idxPath := filepath.Join(dir, idxName)
+	var entries item.Off
+	for _, fork := range forks {
+		idxPath := idxPath(dir, fork)
 		idx, err := loadIndex(idxPath, log, opts)
 		if err != nil {
 			return nil, err
 		}
 
-		indexes[index.ConsumerNameFromBasename(idxName)] = idx
-	}
-
-	if !defaultIndexFound {
-		idxPath := filepath.Join(dir, "idx.log")
-		idx, err := loadIndex(idxPath, log, opts)
-		if err != nil {
-			return nil, err
-		}
-
-		indexes[""] = idx
+		indexes[fork] = idx
+		entries += idx.Mem.NEntries()
 	}
 
 	key, err := item.KeyFromString(filepath.Base(dir))
@@ -197,13 +191,37 @@ func Open(dir string, opts Options) (buck *Bucket, outErr error) {
 		return nil, err
 	}
 
-	return &Bucket{
+	buck = &Bucket{
 		dir:     dir,
 		key:     item.Key(key),
 		log:     log,
 		indexes: indexes,
 		opts:    opts,
-	}, nil
+	}
+
+	if buck.AllEmpty() && entries > 0 {
+		// This means that the buck is empty, but is still occupying space
+		// (i.e. it contains values that were popped already). Situations where
+		// this might occur are: a Pop() that was interrupted (e.g. a crash), a
+		// RemoveFork() that deleted a fork offline, but could not check if
+		// it's empty or some other weird crash situation. This is not really
+		// an issue but since we occupy space for no real data we should clean up.
+		//
+		// We do this by brute force: Close the bucket, remove the directory and let it
+		// create again by the logic above. This is an edge case, so it doesn't matter if
+		// this is perfectly optimized.
+		if err := buck.Close(); err != nil {
+			return nil, fmt.Errorf("close for reinit: %w", err)
+		}
+
+		if err := removeBucketDir(dir, forks); err != nil {
+			return nil, fmt.Errorf("remove for reinit: %w", err)
+		}
+
+		return Open(dir, forks, opts)
+	}
+
+	return buck, nil
 }
 
 func (b *Bucket) Sync(force bool) error {
@@ -215,9 +233,9 @@ func (b *Bucket) Sync(force bool) error {
 	return err
 }
 
-func (b *Bucket) Trailers(fn func(consumer string, trailer index.Trailer)) {
-	for consumer, idx := range b.indexes {
-		fn(consumer, idx.Mem.Trailer())
+func (b *Bucket) Trailers(fn func(fork ForkName, trailer index.Trailer)) {
+	for fork, idx := range b.indexes {
+		fn(fork, idx.Mem.Trailer())
 	}
 }
 
@@ -280,13 +298,13 @@ func (b *Bucket) addIter(batchIters *vlog.Iters, idxIter *index.Iter) (bool, err
 	return !idxIter.Next(), nil
 }
 
-func (b *Bucket) Pop(n int, dst item.Items, consumer string) (item.Items, int, error) {
+func (b *Bucket) Pop(n int, dst item.Items, fork ForkName) (item.Items, int, error) {
 	if n <= 0 {
 		// technically that's a valid use case.
 		return dst, 0, nil
 	}
 
-	idx, err := b.idxForConsumer(consumer)
+	idx, err := b.idxForFork(fork)
 	if err != nil {
 		return dst, 0, err
 	}
@@ -305,12 +323,12 @@ func (b *Bucket) Pop(n int, dst item.Items, consumer string) (item.Items, int, e
 	return items, npopped, nil
 }
 
-func (b *Bucket) Peek(n int, dst item.Items, consumer string) (item.Items, int, error) {
+func (b *Bucket) Peek(n int, dst item.Items, fork ForkName) (item.Items, int, error) {
 	if n <= 0 {
 		return dst, 0, nil
 	}
 
-	idx, err := b.idxForConsumer(consumer)
+	idx, err := b.idxForFork(fork)
 	if err != nil {
 		return dst, 0, err
 	}
@@ -323,13 +341,13 @@ func (b *Bucket) Peek(n int, dst item.Items, consumer string) (item.Items, int, 
 // crashes the data might be present in the destination queue, but is
 // not yet deleted from the source queue. Callers should be ready to
 // handle duplicates.
-func (b *Bucket) Move(n int, dst item.Items, dstBuck *Bucket, consumer string) (item.Items, int, error) {
+func (b *Bucket) Move(n int, dst item.Items, dstBuck *Bucket, fork ForkName) (item.Items, int, error) {
 	if n <= 0 {
 		// technically that's a valid use case.
 		return dst, 0, nil
 	}
 
-	idx, err := b.idxForConsumer(consumer)
+	idx, err := b.idxForFork(fork)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -455,7 +473,7 @@ func (b *Bucket) popSync(idx Index, batchIters *vlog.Iters) error {
 	return idx.Log.Sync(false)
 }
 
-func (b *Bucket) DeleteLowerThan(consumer string, key item.Key) (ndeleted int, outErr error) {
+func (b *Bucket) DeleteLowerThan(fork ForkName, key item.Key) (ndeleted int, outErr error) {
 	defer recoverMmapError(&outErr)
 
 	if b.key >= key {
@@ -463,7 +481,7 @@ func (b *Bucket) DeleteLowerThan(consumer string, key item.Key) (ndeleted int, o
 		return 0, nil
 	}
 
-	idx, err := b.idxForConsumer(consumer)
+	idx, err := b.idxForFork(fork)
 	if err != nil {
 		return 0, err
 	}
@@ -543,8 +561,8 @@ func (b *Bucket) AllEmpty() bool {
 	return true
 }
 
-func (b *Bucket) Empty(consumer string) bool {
-	idx, err := b.idxForConsumer(consumer)
+func (b *Bucket) Empty(fork ForkName) bool {
+	idx, err := b.idxForFork(fork)
 	if err != nil {
 		return true
 	}
@@ -556,8 +574,8 @@ func (b *Bucket) Key() item.Key {
 	return b.key
 }
 
-func (b *Bucket) Len(consumer string) int {
-	idx, err := b.idxForConsumer(consumer)
+func (b *Bucket) Len(fork ForkName) int {
+	idx, err := b.idxForFork(fork)
 	if err != nil {
 		return 0
 	}
@@ -565,14 +583,14 @@ func (b *Bucket) Len(consumer string) int {
 	return int(idx.Mem.Len())
 }
 
-func (b *Bucket) Fork(src, dst string) error {
-	srcIdx, err := b.idxForConsumer(src)
+func (b *Bucket) Fork(src, dst ForkName) error {
+	srcIdx, err := b.idxForFork(src)
 	if err != nil {
 		return err
 	}
 
 	// If we fork to `dst`, then dst should better not exist.
-	if _, err := b.idxForConsumer(dst); err == nil {
+	if _, err := b.idxForFork(dst); err == nil {
 		return ErrForkExists
 	}
 
@@ -593,7 +611,7 @@ func (b *Bucket) Fork(src, dst string) error {
 	return nil
 }
 
-func forkOffline(buckDir, src, dst string) error {
+func forkOffline(buckDir string, src, dst ForkName) error {
 	srcPath := idxPath(buckDir, src)
 	dstPath := idxPath(buckDir, dst)
 	if _, err := os.Stat(dstPath); err == nil {
@@ -605,14 +623,14 @@ func forkOffline(buckDir, src, dst string) error {
 	return copy.Copy(srcPath, dstPath, opts)
 }
 
-func (b *Bucket) RemoveFork(consumer string) error {
-	idx, err := b.idxForConsumer(consumer)
+func (b *Bucket) RemoveFork(fork ForkName) error {
+	idx, err := b.idxForFork(fork)
 	if err != nil {
 		return err
 	}
 
-	dstPath := idxPath(b.dir, consumer)
-	delete(b.indexes, consumer)
+	dstPath := idxPath(b.dir, fork)
+	delete(b.indexes, fork)
 	return errors.Join(
 		idx.Log.Close(),
 		os.Remove(dstPath),
@@ -620,16 +638,19 @@ func (b *Bucket) RemoveFork(consumer string) error {
 }
 
 // like RemoveFork() but used when the bucket is not loaded.
-func removeForkOffline(buckDir, consumer string) error {
+func removeForkOffline(buckDir string, fork ForkName) error {
 	// Quick path: bucket was not loaded, so we can just throw out
 	// the to-be-removed index file:
-	return os.Remove(idxPath(buckDir, consumer))
+	return os.Remove(idxPath(buckDir, fork))
 }
 
-func (b *Bucket) Forks() []string {
-	forks := make([]string, 0, len(b.indexes))
-	for consumer := range b.indexes {
-		forks = append(forks, consumer)
+func (b *Bucket) Forks() []ForkName {
+	// NOTE: Why + 1? Because some functions like Open() will
+	// append the ""-fork as default to the list, so we spare
+	// one allocation if we add one extra.
+	forks := make([]ForkName, 0, len(b.indexes)+1)
+	for fork := range b.indexes {
+		forks = append(forks, fork)
 	}
 
 	return forks
@@ -643,16 +664,26 @@ func filterIsNotExist(err error) error {
 	return err
 }
 
-func removeBucketDir(dir string) error {
+func removeBucketDir(dir string, forks []ForkName) error {
 	// We do this here because os.RemoveAll() is a bit more expensive,
 	// as it does some extra syscalls and some portability checks that
 	// we do not really need. Just delete them explicitly.
 	//
 	// We also don't care if the files actually existed, as long as they
 	// are gone after this function call.
+
+	var err error
+	for _, fork := range forks {
+		err = errors.Join(
+			err,
+			filterIsNotExist(os.Remove(idxPath(dir, fork))),
+		)
+	}
+
 	return errors.Join(
-		filterIsNotExist(os.Remove(filepath.Join(dir, "idx.log"))),
+		err,
 		filterIsNotExist(os.Remove(filepath.Join(dir, "dat.log"))),
+		filterIsNotExist(os.Remove(filepath.Join(dir, "idx.log"))),
 		filterIsNotExist(os.Remove(dir)),
 	)
 }

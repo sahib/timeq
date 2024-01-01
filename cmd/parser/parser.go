@@ -148,10 +148,42 @@ func Run(args []string) error {
 				},
 			},
 		}, {
+			Name:  "fork",
+			Usage: "Utilities for forks",
+			Subcommands: []cli.Command{
+				{
+					Name:   "list",
+					Usage:  "List all forks",
+					Action: withQueue(handleForkList),
+				}, {
+					Name:   "create",
+					Usage:  "Create a named fork",
+					Action: withQueue(handleForkCreate),
+					Flags: []cli.Flag{
+						cli.StringFlag{
+							Name:     "n,name",
+							Usage:    "Name of the fork",
+							Required: true,
+						},
+					},
+				}, {
+					Name:   "remove",
+					Usage:  "Remove a specific fork",
+					Action: withQueue(handleForkRemove),
+					Flags: []cli.Flag{
+						cli.StringFlag{
+							Name:     "n,name",
+							Usage:    "Name of the fork",
+							Required: true,
+						},
+					},
+				},
+			},
+		}, {
 			Name:  "log",
 			Usage: "Utilities for checking value logs",
 			Subcommands: []cli.Command{
-				cli.Command{
+				{
 					Name:   "dump",
 					Usage:  "Print all values in the log",
 					Action: handleLogDump,
@@ -271,4 +303,28 @@ func handleLogDump(ctx *cli.Context) error {
 	}
 
 	return log.Close()
+}
+
+func handleForkCreate(ctx *cli.Context, q *timeq.Queue) error {
+	name := ctx.String("name")
+	_, err := q.Fork(timeq.ForkName(name))
+	return err
+}
+
+func handleForkList(_ *cli.Context, q *timeq.Queue) error {
+	for _, fork := range q.Forks() {
+		fmt.Println(fork)
+	}
+
+	return nil
+}
+
+func handleForkRemove(ctx *cli.Context, q *timeq.Queue) error {
+	name := ctx.String("name")
+	fork, err := q.Fork(timeq.ForkName(name))
+	if err != nil {
+		return err
+	}
+
+	return fork.Remove()
 }

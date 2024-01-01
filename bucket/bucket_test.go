@@ -18,7 +18,7 @@ func createEmptyBucket(t *testing.T) (*Bucket, string) {
 	require.NoError(t, err)
 
 	bucketDir := filepath.Join(dir, item.Key(23).String())
-	bucket, err := Open(bucketDir, DefaultOptions())
+	bucket, err := Open(bucketDir, nil, DefaultOptions())
 	require.NoError(t, err)
 
 	return bucket, dir
@@ -235,7 +235,7 @@ func TestBucketDeleteLowerThanReopen(t *testing.T) {
 
 	// Re-open the bucket:
 	require.NoError(t, bucket.Close())
-	bucket, err = Open(bucket.dir, bucket.opts)
+	bucket, err = Open(bucket.dir, nil, bucket.opts)
 	require.NoError(t, err)
 
 	// Pop should now see the previous 100:
@@ -392,14 +392,14 @@ func testBucketRegenWith(t *testing.T, isDamaged bool, reopen bool, damageFn fun
 	}
 
 	// This should trigger the reindex:
-	buck, err = Open(bucketDir, opts)
+	buck, err = Open(bucketDir, nil, opts)
 	require.NoError(t, err)
 
 	if reopen {
 		// on reindex we store the index in memory.
 		// make sure we do not make mistakes during writing.
 		require.NoError(t, buck.Close())
-		buck, err = Open(bucketDir, opts)
+		buck, err = Open(bucketDir, nil, opts)
 		require.NoError(t, err)
 	}
 
@@ -418,4 +418,49 @@ func testBucketRegenWith(t *testing.T, isDamaged bool, reopen bool, damageFn fun
 	} else {
 		require.Empty(t, logBuffer.String())
 	}
+}
+
+// Test if Open() notices that we're wasting space and cleans up afterwards.
+func TestBucketReinitOnEmpty(t *testing.T) {
+	t.Run("no-close-after-reinit", func(t *testing.T) {
+		testBucketReinitOnEmpty(t, false)
+	})
+	t.Run("close-after-reinit", func(t *testing.T) {
+		testBucketReinitOnEmpty(t, true)
+	})
+}
+
+func testBucketReinitOnEmpty(t *testing.T, closeAfterReinit bool) {
+	t.Parallel()
+
+	buck, dir := createEmptyBucket(t)
+	defer os.RemoveAll(dir)
+
+	exp := testutils.GenItems(0, 100, 1)
+	require.NoError(t, buck.Push(exp))
+	got, npopped, err := buck.Pop(100, nil, "")
+	require.NoError(t, err)
+	require.Equal(t, exp, got)
+	require.Equal(t, 100, npopped)
+	require.NoError(t, buck.Close())
+
+	// re-open the same bucket - it's empty, but still has data laying around.
+	// it should still be operational like before.
+	bucketDir := filepath.Join(dir, item.Key(23).String())
+	newBuck, err := Open(bucketDir, nil, DefaultOptions())
+
+	if closeAfterReinit {
+		require.NoError(t, err)
+		require.NoError(t, newBuck.Close())
+		newBuck, err = Open(bucketDir, nil, DefaultOptions())
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, newBuck.Push(exp))
+	got, npopped, err = newBuck.Pop(100, nil, "")
+	require.NoError(t, err)
+	require.Equal(t, exp, got)
+	require.Equal(t, 100, npopped)
+
+	require.NoError(t, newBuck.Close())
 }

@@ -55,11 +55,6 @@ func (fi *Reader) Err() error {
 	return fi.err
 }
 
-func ConsumerNameFromBasename(name string) string {
-	consumerName := strings.TrimSuffix(name, "idx.log")
-	return strings.TrimSuffix(consumerName, ".")
-}
-
 func ReadTrailers(dir string, fn func(consumerName string, trailer Trailer)) error {
 	ents, err := os.ReadDir(dir)
 	if err != nil {
@@ -78,7 +73,9 @@ func ReadTrailers(dir string, fn func(consumerName string, trailer Trailer)) err
 			return err
 		}
 
-		fn(ConsumerNameFromBasename(name), trailer)
+		consumerName := strings.TrimSuffix(name, "idx.log")
+		consumerName = strings.TrimSuffix(consumerName, ".")
+		fn(consumerName, trailer)
 	}
 
 	return nil

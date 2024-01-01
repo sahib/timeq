@@ -3,7 +3,7 @@
 [![GoDoc](https://godoc.org/github.com/sahib/timeq?status.svg)](https://godoc.org/github.com/sahib/timeq)
 ![Build status](https://github.com/sahib/timeq/actions/workflows/go.yml/badge.svg)
 
-A persistent priority queue in Go.
+A file-based priority queue in Go.
 
 > [!WARNING]
 > This is still in active development. Before version 1.0 the API and the format on disk might change.

@@ -19,8 +19,8 @@ import (
 // loading them fully (i.e. the len). Since the Len can be different for each
 // fork we need to keep it for each one separately.
 type trailerKey struct {
-	Key      item.Key
-	Consumer string
+	Key  item.Key
+	fork ForkName
 }
 
 type Buckets struct {
@@ -29,6 +29,7 @@ type Buckets struct {
 	tree     btree.Map[item.Key, *Bucket]
 	trailers map[trailerKey]index.Trailer
 	opts     Options
+	forks    []ForkName
 }
 
 func LoadAll(dir string, opts Options) (*Buckets, error) {
@@ -62,11 +63,11 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 
 		dirsHandled++
 
-		if err := index.ReadTrailers(buckPath, func(consumer string, trailer index.Trailer) {
+		if err := index.ReadTrailers(buckPath, func(fork string, trailer index.Trailer) {
 			// nil entries indicate buckets that were not loaded yet:
 			trailers[trailerKey{
-				Key:      key,
-				Consumer: consumer,
+				Key:  key,
+				fork: ForkName(fork),
 			}] = trailer
 		}); err != nil {
 			// reading trailers is not too fatal, but applications may break in unexpected
@@ -81,12 +82,20 @@ func LoadAll(dir string, opts Options) (*Buckets, error) {
 		return nil, fmt.Errorf("%s is not empty; refusing to create db", dir)
 	}
 
-	return &Buckets{
+	bs := &Buckets{
 		dir:      dir,
 		tree:     tree,
 		opts:     opts,
 		trailers: trailers,
-	}, nil
+	}
+
+	forks, err := bs.fetchForks()
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch forks: %w", err)
+	}
+
+	bs.forks = forks
+	return bs, nil
 }
 
 // ValidateBucketKeys checks if the keys in the buckets correspond to the result
@@ -130,7 +139,7 @@ func (bs *Buckets) forKey(key item.Key) (*Bucket, error) {
 	}
 
 	var err error
-	buck, err = Open(bs.buckPath(key), bs.opts)
+	buck, err = Open(bs.buckPath(key), bs.forks, bs.opts)
 	if err != nil {
 		return nil, err
 	}
@@ -163,10 +172,8 @@ func (bs *Buckets) delete(key item.Key) error {
 	}
 
 	bs.tree.Delete(key)
-	return errors.Join(
-		err,
-		removeBucketDir(dir),
-	)
+
+	return errors.Join(err, removeBucketDir(dir, bs.forks))
 }
 
 type IterMode int
@@ -277,7 +284,7 @@ func (bs *Buckets) Close() error {
 	})
 }
 
-func (bs *Buckets) Len(consumer string) int {
+func (bs *Buckets) Len(fork ForkName) int {
 	var len int
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
@@ -285,8 +292,8 @@ func (bs *Buckets) Len(consumer string) int {
 	_ = bs.iter(IncludeNil, func(key item.Key, b *Bucket) error {
 		if b == nil {
 			trailer, ok := bs.trailers[trailerKey{
-				Key:      key,
-				Consumer: consumer,
+				Key:  key,
+				fork: fork,
 			}]
 
 			if !ok {
@@ -298,14 +305,14 @@ func (bs *Buckets) Len(consumer string) int {
 			return nil
 		}
 
-		len += b.Len(consumer)
+		len += b.Len(fork)
 		return nil
 	})
 
 	return len
 }
 
-func (bs *Buckets) Shovel(dstBs *Buckets, consumer string) (int, error) {
+func (bs *Buckets) Shovel(dstBs *Buckets, fork ForkName) (int, error) {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 
@@ -322,14 +329,14 @@ func (bs *Buckets) Shovel(dstBs *Buckets, consumer string) (int, error) {
 			srcPath := bs.buckPath(key)
 			dstBs.tree.Set(key, nil)
 
-			if err := index.ReadTrailers(srcPath, func(srcConsumer string, trailer index.Trailer) {
-				if consumer == srcConsumer {
+			if err := index.ReadTrailers(srcPath, func(srcfork string, trailer index.Trailer) {
+				if fork == ForkName(srcfork) {
 					ntotalcopied += int(trailer.TotalEntries)
 				}
 
 				dstBs.trailers[trailerKey{
-					Key:      key,
-					Consumer: srcConsumer,
+					Key:  key,
+					fork: ForkName(srcfork),
 				}] = trailer
 			}); err != nil {
 				return err
@@ -352,7 +359,7 @@ func (bs *Buckets) Shovel(dstBs *Buckets, consumer string) (int, error) {
 			return err
 		}
 
-		_, ncopied, err := srcBuck.Move(math.MaxInt, buf[:0], dstBuck, consumer)
+		_, ncopied, err := srcBuck.Move(math.MaxInt, buf[:0], dstBuck, fork)
 		ntotalcopied += ncopied
 
 		return err
@@ -432,10 +439,10 @@ func (bs *Buckets) closeUnused(maxBucks int) error {
 
 		// We need to store the trailers of each fork, so we know how to
 		// calculcate the length of the queue without having to load everything.
-		bucket.Trailers(func(consumer string, trailer index.Trailer) {
+		bucket.Trailers(func(fork ForkName, trailer index.Trailer) {
 			bs.trailers[trailerKey{
-				Key:      key,
-				Consumer: consumer,
+				Key:  key,
+				fork: fork,
 			}] = trailer
 		})
 
@@ -537,7 +544,7 @@ const (
 type ReadFn func(items item.Items) error
 
 // Read handles all kind of reading operations. It is a low-level function that is not part of the official API.
-func (bs *Buckets) Read(op ReadOp, n int, dst item.Items, consumer string, fn ReadFn, dstBs *Buckets) error {
+func (bs *Buckets) Read(op ReadOp, n int, dst item.Items, fork ForkName, fn ReadFn, dstBs *Buckets) error {
 	if n < 0 {
 		// use max value in this case:
 		n = int(^uint(0) >> 1)
@@ -549,7 +556,7 @@ func (bs *Buckets) Read(op ReadOp, n int, dst item.Items, consumer string, fn Re
 	var count = n
 	return bs.iter(Load, func(key item.Key, b *Bucket) error {
 		// Choose the right func for the operation:
-		var opFn func(n int, dst item.Items, consumer string) (item.Items, int, error)
+		var opFn func(n int, dst item.Items, fork ForkName) (item.Items, int, error)
 		switch op {
 		case ReadOpPop:
 			opFn = b.Pop
@@ -557,20 +564,20 @@ func (bs *Buckets) Read(op ReadOp, n int, dst item.Items, consumer string, fn Re
 			opFn = b.Peek
 		case ReadOpMove:
 			// Move() has a slightly different signature, so adapter is needed.
-			opFn = func(count int, dst item.Items, consumer string) (item.Items, int, error) {
+			opFn = func(count int, dst item.Items, fork ForkName) (item.Items, int, error) {
 				dstBuck, err := dstBs.forKey(b.key)
 				if err != nil {
 					return dst, 0, nil
 				}
 
-				return b.Move(count, dst, dstBuck, consumer)
+				return b.Move(count, dst, dstBuck, fork)
 			}
 		default:
 			// programmer error
 			panic("invalid op")
 		}
 
-		items, nitems, err := opFn(count, dst, consumer)
+		items, nitems, err := opFn(count, dst, fork)
 		if err != nil {
 			if bs.opts.ErrorMode == ErrorModeAbort {
 				return err
@@ -605,7 +612,7 @@ func (bs *Buckets) Read(op ReadOp, n int, dst item.Items, consumer string, fn Re
 	})
 }
 
-func (bs *Buckets) DeleteLowerThan(consumer string, key item.Key) (int, error) {
+func (bs *Buckets) DeleteLowerThan(fork ForkName, key item.Key) (int, error) {
 	var numDeleted int
 	var deletableBucks []*Bucket
 
@@ -618,7 +625,7 @@ func (bs *Buckets) DeleteLowerThan(consumer string, key item.Key) (int, error) {
 			return IterStop
 		}
 
-		numDeletedOfBucket, err := buck.DeleteLowerThan(consumer, key)
+		numDeletedOfBucket, err := buck.DeleteLowerThan(fork, key)
 		if err != nil {
 			if bs.opts.ErrorMode == ErrorModeAbort {
 				return err
@@ -650,8 +657,12 @@ func (bs *Buckets) DeleteLowerThan(consumer string, key item.Key) (int, error) {
 	return numDeleted, nil
 }
 
-func (bs *Buckets) Fork(src, dst string) error {
-	return bs.iter(IncludeNil, func(key item.Key, buck *Bucket) error {
+func (bs *Buckets) Fork(src, dst ForkName) error {
+	if err := dst.Validate(); err != nil {
+		return err
+	}
+
+	err := bs.iter(IncludeNil, func(key item.Key, buck *Bucket) error {
 		if buck != nil {
 			return buck.Fork(src, dst)
 		}
@@ -659,26 +670,60 @@ func (bs *Buckets) Fork(src, dst string) error {
 		buckDir := filepath.Join(bs.dir, key.String())
 		return forkOffline(buckDir, src, dst)
 	})
+
+	if err != nil {
+		return err
+	}
+
+	bs.forks = append(bs.forks, dst)
+	return nil
 }
 
-func (bs *Buckets) RemoveFork(consumer string) error {
+func (bs *Buckets) RemoveFork(fork ForkName) error {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
+
+	if err := fork.Validate(); err != nil {
+		return err
+	}
+
+	// Remove fork from fork list to avoid creating it again:
+	bs.forks = slices.DeleteFunc(bs.forks, func(candidate ForkName) bool {
+		return fork == candidate
+	})
 
 	return bs.iter(IncludeNil, func(key item.Key, buck *Bucket) error {
 		if buck != nil {
-			return buck.RemoveFork(consumer)
+			if err := buck.RemoveFork(fork); err != nil {
+				return err
+			}
+
+			// might be empty after deletion, so we can get rid of the bucket.
+			if !buck.AllEmpty() {
+				return nil
+			}
+
+			return bs.delete(key)
 		}
 
+		// NOTE: In contrast to the "loaded bucket" case above we do not check if the bucket is
+		// considered AllEmpty() after the fork deletion. We defer that to the next Open() of this
+		// bucket to avoid having to load all buckets here. We can have a clean up  logic in Open()
+		// that re-initializes the bucket freshly when the index Len() is zero (and no recover needed).
 		buckDir := filepath.Join(bs.dir, key.String())
-		return removeForkOffline(buckDir, consumer)
+		return removeForkOffline(buckDir, fork)
 	})
 }
 
-func (bs *Buckets) Forks() ([]string, error) {
+func (bs *Buckets) Forks() []ForkName {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 
+	return bs.forks
+}
+
+// fetchForks actually checks the disk to find the current forks.
+func (bs *Buckets) fetchForks() ([]ForkName, error) {
 	var buck *Bucket
 	for iter := bs.tree.Iter(); iter.Next(); {
 		buck = iter.Value()
@@ -702,7 +747,7 @@ func (bs *Buckets) Forks() ([]string, error) {
 
 	if buck == nil {
 		// still nil? The tree is probably empty.
-		return []string{}, nil
+		return []ForkName{}, nil
 	}
 
 	return buck.Forks(), nil

@@ -907,3 +907,67 @@ func TestAPI4GLog(t *testing.T) {
 	require.Equal(t, got, expected)
 	require.NoError(t, queue.Close())
 }
+
+func TestAPIForkBasicBeforePush(t *testing.T) {
+	t.Run("push-before-full-pop", func(t *testing.T) {
+		// if we push before fork, the buckets exist & are forked online.
+		testAPIForkBasicBeforePush(t, true, 100, 100)
+	})
+	t.Run("push-after-full-pop", func(t *testing.T) {
+		// if we push after fork, the buckets do not exist & are forked offline.
+		testAPIForkBasicBeforePush(t, false, 100, 100)
+	})
+	t.Run("push-before-partial-pop", func(t *testing.T) {
+		// If the bucket is fully empty, then we do the RemoveFork() offline.
+		testAPIForkBasicBeforePush(t, true, 100, 99)
+	})
+	t.Run("push-after-partial-pop", func(t *testing.T) {
+		// If the bucket is not fully empty, then we do the RemoveFork() online.
+		testAPIForkBasicBeforePush(t, false, 100, 99)
+	})
+}
+
+func testAPIForkBasicBeforePush(t *testing.T, pushBefore bool, pushn, popn int) {
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	exp := testutils.GenItems(0, pushn, 1)
+
+	queue, err := Open(dir, DefaultOptions())
+	require.NoError(t, err)
+
+	// At the beginning, no forks should exist.
+	require.Equal(t, []ForkName{}, queue.Forks())
+
+	if pushBefore {
+		require.NoError(t, queue.Push(exp))
+	}
+
+	fork, err := queue.Fork("fork")
+	require.NoError(t, err)
+	require.Equal(t, []ForkName{"fork"}, queue.Forks())
+
+	// consumers should also exist, even if we start later.
+	if !pushBefore {
+		require.NoError(t, queue.Push(exp))
+	}
+
+	got1, err := PopCopy(fork, popn)
+	require.NoError(t, err)
+
+	got2, err := PopCopy(queue, popn)
+	require.NoError(t, err)
+
+	require.Equal(t, exp[:popn], got1)
+	require.Equal(t, exp[:popn], got2)
+
+	require.NoError(t, fork.Remove())
+	require.Equal(t, []ForkName{}, queue.Forks())
+
+	items, err := PopCopy(fork, popn)
+	require.Equal(t, ErrNoSuchFork, err)
+	require.Empty(t, items)
+
+	require.NoError(t, queue.Close())
+}

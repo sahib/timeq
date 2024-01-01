@@ -14,7 +14,7 @@ func writeDummyBucket(t *testing.T, dir string, key item.Key, items item.Items) 
 	bucketDir := filepath.Join(dir, key.String())
 	require.NoError(t, os.MkdirAll(bucketDir, 0700))
 
-	bucket, err := Open(bucketDir, DefaultOptions())
+	bucket, err := Open(bucketDir, nil, DefaultOptions())
 	require.NoError(t, err)
 
 	require.NoError(t, bucket.Push(items))

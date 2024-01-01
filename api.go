@@ -1,3 +1,4 @@
+// Package timeq  is a file-based priority queue in Go.
 package timeq
 
 import (
@@ -145,11 +146,24 @@ func (q *Queue) Shovel(dst *Queue) (int, error) {
 	return q.buckets.Shovel(dst.buckets, "")
 }
 
-func (q *Queue) Fork(name string) (Consumer, error) {
-	return &fork{name: name, q: q}, nil
+// Fork splits the reading end of the queue in two parts. If Pop() is
+// called on the returned Fork (which implements the Consumer interface),
+// then other forks and the original queue is not affected.
+//
+// The process of forking is relatively cheap and adds only minor storage and
+// memory cost to the queue as a whole. Performance during pushing and popping
+// is almost not affected at all.
+func (q *Queue) Fork(name ForkName) (*Fork, error) {
+	if err := q.buckets.Fork("", name); err != nil {
+		return nil, err
+	}
+
+	return &Fork{name: name, q: q}, nil
 }
 
-func (q *Queue) Forks() ([]string, error) {
+// Forks returns a list of fork names. The list will be empty if there are no forks yet.
+// In other words: The initial queue is not counted as fork.
+func (q *Queue) Forks() []ForkName {
 	return q.buckets.Forks()
 }
 
@@ -160,8 +174,53 @@ func (q *Queue) Close() error {
 	return q.buckets.Close()
 }
 
+// PopCopy works like a simplified Pop() but copies the items. It is less
+// efficient and should not be used if you care for performance.
+func PopCopy(c Consumer, n int) (Items, error) {
+	var items Items
+	return items, c.Pop(n, nil, func(popped Items) error {
+		items = append(items, popped.Copy()...)
+		return nil
+	})
+}
+
+// PeekCopy works like a simplified Peek() but copies the items. It is less
+// efficient and should not be used if you care for performance.
+func PeekCopy(c Consumer, n int) (Items, error) {
+	var items Items
+	return items, c.Peek(n, nil, func(popped Items) error {
+		items = append(items, popped.Copy()...)
+		return nil
+	})
+}
+
+// MoveCopy works like a simplified Move() but copies the items. It is less
+// efficient and should not be used if you care for performance.
+func MoveCopy(c Consumer, n int, dst *Queue) (Items, error) {
+	var items Items
+	return items, c.Move(n, nil, dst, func(popped Items) error {
+		items = append(items, popped.Copy()...)
+		return nil
+	})
+}
+
 /////////////
 
+type ForkName = bucket.ForkName
+
+type Fork struct {
+	name ForkName
+	q    *Queue
+}
+
+var (
+	// ErrNoSuchFork is returned whenever the name of a fork is not known,
+	// or if the fork was deleted already.
+	ErrNoSuchFork = bucket.ErrNoSuchFork
+)
+
+// Consumer is an interface that both Fork and Queue implement.
+// It covers every consumer related API.
 type Consumer interface {
 	Pop(n int, dst Items, fn ReadFn) error
 	Peek(n int, dst Items, fn ReadFn) error
@@ -169,48 +228,82 @@ type Consumer interface {
 	DeleteLowerThan(key Key) (int, error)
 	Shovel(dst *Queue) (int, error)
 	Len() int
-}
-
-type Fork interface {
-	Consumer
-	Remove() error
-	Fork(name string) error
-}
-
-type fork struct {
-	name string
-	q    *Queue
+	Fork(name ForkName) (*Fork, error)
 }
 
 // Check that Queue also implements the Consumer interface.
 var _ Consumer = &Queue{}
 
-func (f *fork) Pop(n int, dst Items, fn ReadFn) error {
+// Pop is like Queue.Pop().
+func (f *Fork) Pop(n int, dst Items, fn ReadFn) error {
+	if f.q == nil {
+		return ErrNoSuchFork
+	}
+
 	return f.q.buckets.Read(bucket.ReadOpPop, n, dst, f.name, fn, nil)
 }
 
-func (f *fork) Peek(n int, dst Items, fn ReadFn) error {
+// Peek is like Queue.Peek().
+func (f *Fork) Peek(n int, dst Items, fn ReadFn) error {
+	if f.q == nil {
+		return ErrNoSuchFork
+	}
 	return f.q.buckets.Read(bucket.ReadOpPeek, n, dst, f.name, fn, nil)
 }
 
-func (f *fork) Move(n int, dst Items, dstQueue *Queue, fn ReadFn) error {
+// Move is like Queue.Move().
+func (f *Fork) Move(n int, dst Items, dstQueue *Queue, fn ReadFn) error {
+	if f.q == nil {
+		return ErrNoSuchFork
+	}
 	return f.q.buckets.Read(bucket.ReadOpMove, n, dst, f.name, fn, dstQueue.buckets)
 }
 
-func (f *fork) Len() int {
+// Len is like Queue.Len().
+func (f *Fork) Len() int {
+	if f.q == nil {
+		return 0
+	}
+
 	// ignore the error, as it can only happen with bad consumer name.
 	return f.q.buckets.Len(f.name)
 }
 
-func (f *fork) DeleteLowerThan(key Key) (int, error) {
+// DeleteLowerThan is like Queue.DeleteLowerThan().
+func (f *Fork) DeleteLowerThan(key Key) (int, error) {
+	if f.q == nil {
+		return 0, ErrNoSuchFork
+	}
 	return f.q.buckets.DeleteLowerThan(f.name, key)
 }
 
-// Remove removes this fork. The consumer should not be used afterwards anymore.
-func (f *fork) Remove() error {
-	return f.q.buckets.RemoveFork(f.name)
+// Remove removes this fork. If the fork is used after this, the API
+// will return ErrNoSuchFork in all cases.
+func (f *Fork) Remove() error {
+	if f.q == nil {
+		return ErrNoSuchFork
+	}
+
+	q := f.q
+	f.q = nil // mark self as deleted.
+	return q.buckets.RemoveFork(f.name)
 }
 
-func (f *fork) Shovel(dst *Queue) (int, error) {
+// Shovel is like Queue.Shovel(). The data of the current fork
+// is pushed to the `dst` queue.
+func (f *Fork) Shovel(dst *Queue) (int, error) {
+	if f.q == nil {
+		return 0, ErrNoSuchFork
+	}
 	return f.q.buckets.Shovel(dst.buckets, f.name)
+}
+
+// Fork is like Queue.Fork(), except that the fork happens relative to the
+// current state of the consumer and not to the state of the underlying Queue.
+func (f *Fork) Fork(name ForkName) (*Fork, error) {
+	if err := f.q.buckets.Fork(f.name, name); err != nil {
+		return nil, err
+	}
+
+	return &Fork{name: name, q: f.q}, nil
 }
