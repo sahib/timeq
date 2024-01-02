@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"unicode"
 
 	"github.com/otiai10/copy"
@@ -18,10 +19,6 @@ const (
 	DataLogName = "dat.log"
 )
 
-var (
-	ErrForkExists = errors.New("fork already exists")
-)
-
 type ForkName string
 
 func (name ForkName) Validate() error {
@@ -30,9 +27,9 @@ func (name ForkName) Validate() error {
 	}
 
 	for pos, rn := range []rune(name) {
-		ok := unicode.IsUpper(rn) || unicode.IsLower(rn) || unicode.IsDigit(rn) || rn == '-'
+		ok := unicode.IsUpper(rn) || unicode.IsLower(rn) || unicode.IsDigit(rn) || rn == '-' || rn == '_'
 		if !ok {
-			return fmt.Errorf("invalid fork name at pos %d: %v (allowed: [a-Z0-9-])", pos, rn)
+			return fmt.Errorf("invalid fork name at pos %d: %v (allowed: [a-Z0-9_-])", pos, rn)
 		}
 	}
 
@@ -258,7 +255,7 @@ func recoverMmapError(dstErr *error) {
 }
 
 // Push expects pre-sorted items!
-func (b *Bucket) Push(items item.Items) (outErr error) {
+func (b *Bucket) Push(items item.Items, all bool, name ForkName) (outErr error) {
 	if len(items) == 0 {
 		return nil
 	}
@@ -270,7 +267,20 @@ func (b *Bucket) Push(items item.Items) (outErr error) {
 		return fmt.Errorf("push: log: %w", err)
 	}
 
-	for name, idx := range b.indexes {
+	if all {
+		for name, idx := range b.indexes {
+			idx.Mem.Set(loc)
+			if err := idx.Log.Push(loc, idx.Mem.Trailer()); err != nil {
+				return fmt.Errorf("push: index-log: %s: %w", name, err)
+			}
+		}
+	} else {
+		// only push to a certain index if requested.
+		idx, err := b.idxForFork(name)
+		if err != nil {
+			return err
+		}
+
 		idx.Mem.Set(loc)
 		if err := idx.Log.Push(loc, idx.Mem.Trailer()); err != nil {
 			return fmt.Errorf("push: index-log: %s: %w", name, err)
@@ -358,7 +368,7 @@ func (b *Bucket) Move(n int, dst item.Items, dstBuck *Bucket, fork ForkName) (it
 	}
 
 	if dstBuck != nil {
-		if err := dstBuck.Push(items[len(dst):]); err != nil {
+		if err := dstBuck.Push(items[len(dst):], false, fork); err != nil {
 			return items, npopped, err
 		}
 	}
@@ -591,7 +601,7 @@ func (b *Bucket) Fork(src, dst ForkName) error {
 
 	// If we fork to `dst`, then dst should better not exist.
 	if _, err := b.idxForFork(dst); err == nil {
-		return ErrForkExists
+		return nil // fork exists already.
 	}
 
 	dstPath := idxPath(b.dir, dst)
@@ -612,15 +622,38 @@ func (b *Bucket) Fork(src, dst ForkName) error {
 }
 
 func forkOffline(buckDir string, src, dst ForkName) error {
-	srcPath := idxPath(buckDir, src)
 	dstPath := idxPath(buckDir, dst)
 	if _, err := os.Stat(dstPath); err == nil {
 		// dst already exists.
-		return ErrForkExists
+		return nil
 	}
 
+	srcPath := idxPath(buckDir, src)
 	opts := copy.Options{Sync: true}
 	return copy.Copy(srcPath, dstPath, opts)
+}
+
+// moveBucketOffline copies and removes the bucket at `src` to `dst` (assuming
+// it does not exist yet) and copies only the fork named `name` while doing so.
+func moveBucketOffline(src, dst string, name ForkName) error {
+	srcIdxPath := idxPath(src, name)
+	dstIdxPath := idxPath(src, name)
+	srcDataLog := filepath.Join(src, "dat.log")
+	dstDataLog := filepath.Join(src, "dat.log")
+
+	if err := os.MkdirAll(dst, 0700); err != nil {
+		return err
+	}
+
+	// Move the relevant files:
+	if err := errors.Join(
+		moveFileOrDir(srcDataLog, dstDataLog),
+		moveFileOrDir(srcIdxPath, dstIdxPath),
+	); err != nil {
+		return err
+	}
+
+	return os.RemoveAll(src)
 }
 
 func (b *Bucket) RemoveFork(fork ForkName) error {
@@ -650,9 +683,15 @@ func (b *Bucket) Forks() []ForkName {
 	// one allocation if we add one extra.
 	forks := make([]ForkName, 0, len(b.indexes)+1)
 	for fork := range b.indexes {
+		if fork == "" {
+			continue
+		}
+
 		forks = append(forks, fork)
 	}
 
+	// since it comes from a map we should be nice and sort it.
+	slices.Sort(forks)
 	return forks
 }
 

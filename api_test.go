@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -246,6 +245,13 @@ func TestAPIDeleteLowerThan(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 499, ndeleted)
 
+	// Try with a fork:
+	f, err := queue.Fork("fork")
+	require.NoError(t, err)
+	ndeleted, err = f.DeleteLowerThan(2000)
+	require.NoError(t, err)
+	require.Equal(t, 0, ndeleted)
+
 	require.NoError(t, queue.Close())
 }
 
@@ -267,11 +273,8 @@ func TestAPIPeek(t *testing.T) {
 	exp := testutils.GenItems(0, 200, 1)
 	require.NoError(t, queue.Push(exp))
 
-	got := Items{}
-	require.NoError(t, queue.Peek(len(exp), nil, func(items Items) error {
-		got = append(got, items.Copy()...)
-		return nil
-	}))
+	got, err := PeekCopy(queue, len(exp))
+	require.NoError(t, err)
 	require.Equal(t, len(exp), len(got))
 	require.Equal(t, exp, got)
 
@@ -332,11 +335,8 @@ func TestAPIMove(t *testing.T) {
 	require.Equal(t, len(exp), srcQueue.Len())
 	require.Equal(t, 0, dstQueue.Len())
 
-	got := Items{}
-	require.NoError(t, srcQueue.Move(len(exp), nil, dstQueue, func(items Items) error {
-		got = append(got, items.Copy()...)
-		return nil
-	}))
+	got, err := MoveCopy(srcQueue, len(exp), dstQueue)
+	require.NoError(t, err)
 
 	require.Equal(t, exp, got)
 
@@ -471,6 +471,7 @@ func testAPIErrorModePop(t *testing.T, mode bucket.ErrorMode) {
 }
 
 func TestAPIErrorModeDelete(t *testing.T) {
+	t.Parallel()
 	t.Run("abort", func(t *testing.T) {
 		testAPIErrorModeDeleteLowerThan(t, bucket.ErrorModeAbort)
 	})
@@ -534,6 +535,8 @@ func TestAPIBadOptions(t *testing.T) {
 }
 
 func TestAPIPushError(t *testing.T) {
+	t.Parallel()
+
 	// Still create test dir to make sure it does not error out because of that:
 	dir, err := os.MkdirTemp("", "timeq-apitest")
 	require.NoError(t, err)
@@ -851,22 +854,6 @@ func TestAPIZeroKeyPush(t *testing.T) {
 	require.NoError(t, queue.Close())
 }
 
-func getSizeOfDir(t *testing.T, root string) (size int64) {
-	require.NoError(t, filepath.Walk(root, func(_ string, info fs.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-
-		size += info.Size()
-		return nil
-	}))
-	return
-}
-
 func TestAPIForkBasicBeforePush(t *testing.T) {
 	t.Run("push-before-full-pop", func(t *testing.T) {
 		// if we push before fork, the buckets exist & are forked online.
@@ -907,6 +894,10 @@ func testAPIForkBasicBeforePush(t *testing.T, pushBefore bool, pushn, popn int) 
 	require.NoError(t, err)
 	require.Equal(t, []ForkName{"fork"}, queue.Forks())
 
+	// fork twice should not yield an error (since it's a no-op)
+	_, err = queue.Fork("fork")
+	require.NoError(t, err)
+
 	// consumers should also exist, even if we start later.
 	if !pushBefore {
 		require.NoError(t, queue.Push(exp))
@@ -930,3 +921,53 @@ func testAPIForkBasicBeforePush(t *testing.T, pushBefore bool, pushn, popn int) 
 
 	require.NoError(t, queue.Close())
 }
+
+func TestAPIChainFork(t *testing.T) {
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	queue, err := Open(dir, DefaultOptions())
+	require.NoError(t, err)
+
+	exp := testutils.GenItems(0, 100, 1)
+	require.NoError(t, queue.Push(exp))
+
+	var forks []*Fork
+	var forkNames []ForkName
+	var consumers []Consumer
+
+	for idx := 0; idx < 10; idx++ {
+		forkName := ForkName(fmt.Sprintf("%d", idx))
+
+		var c Consumer = queue
+		if len(forks) > 0 {
+			c = forks[len(forks)-1]
+		}
+
+		popped, err := PopCopy(c, 10)
+		require.NoError(t, err)
+		require.Len(t, popped, 10)
+		require.Equal(t, exp[idx*10:idx*10+10], popped)
+
+		fork, err := c.Fork(forkName)
+		require.NoError(t, err)
+
+		forkNames = append(forkNames, forkName)
+		forks = append(forks, fork)
+		consumers = append(consumers, c)
+	}
+
+	require.Equal(t, forkNames, queue.Forks())
+	for idx, consumer := range consumers {
+		require.Equal(t, 90-10*idx, consumer.Len())
+	}
+
+	for _, fork := range forks {
+		require.NoError(t, fork.Remove())
+	}
+
+	require.NoError(t, queue.Close())
+}
+
+// TODO: Test for bucket deletion on RemoveFork() and bucket deletion when all forks empty.

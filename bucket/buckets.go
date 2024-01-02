@@ -319,7 +319,7 @@ func (bs *Buckets) Shovel(dstBs *Buckets, fork ForkName) (int, error) {
 	dstBs.mu.Lock()
 	defer dstBs.mu.Unlock()
 
-	buf := make(item.Items, 0, 4000)
+	buf := make(item.Items, 0, 2000)
 
 	var ntotalcopied int
 	err := bs.iter(IncludeNil, func(key item.Key, _ *Bucket) error {
@@ -342,7 +342,10 @@ func (bs *Buckets) Shovel(dstBs *Buckets, fork ForkName) (int, error) {
 				return err
 			}
 
+			// TODO: write tests for this.
+			fmt.Println(fork)
 			return moveFileOrDir(srcPath, dstPath)
+			//return moveBucketOffline(srcPath, dstPath, fork)
 		}
 
 		// In this case we have to copy the items more intelligently,
@@ -517,7 +520,8 @@ func (bs *Buckets) Push(items item.Items) error {
 
 			bs.opts.Logger.Printf("failed to push: %v", err)
 		} else {
-			if err := buck.Push(items[:nextIdx]); err != nil {
+			// TODO: Pass fork here?
+			if err := buck.Push(items[:nextIdx], true, ""); err != nil {
 				if bs.opts.ErrorMode == ErrorModeAbort {
 					return fmt.Errorf("bucket: push: %w", err)
 				}
@@ -660,6 +664,11 @@ func (bs *Buckets) DeleteLowerThan(fork ForkName, key item.Key) (int, error) {
 func (bs *Buckets) Fork(src, dst ForkName) error {
 	if err := dst.Validate(); err != nil {
 		return err
+	}
+
+	if slices.Contains(bs.forks, dst) {
+		// if no bucket is currently loaded, we still need to check for dupes.
+		return nil
 	}
 
 	err := bs.iter(IncludeNil, func(key item.Key, buck *Bucket) error {

@@ -116,6 +116,8 @@ func move(t *testing.T, waiting, unacked *Queue) {
 		expect = queueLenBefore
 	}
 
+	fmt.Println("SHOVEL")
+
 	require.Equal(t, expect, count)
 }
 

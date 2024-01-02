@@ -25,6 +25,8 @@ func createEmptyBucket(t *testing.T) (*Bucket, string) {
 }
 
 func withEmptyBucket(t *testing.T, fn func(b *Bucket)) {
+	t.Parallel()
+
 	bucket, dir := createEmptyBucket(t)
 	defer os.RemoveAll(dir)
 	fn(bucket)
@@ -40,7 +42,7 @@ func TestBucketOpenEmpty(t *testing.T) {
 
 func TestBucketPushEmpty(t *testing.T) {
 	withEmptyBucket(t, func(bucket *Bucket) {
-		require.NoError(t, bucket.Push(nil))
+		require.NoError(t, bucket.Push(nil, true, ""))
 	})
 }
 
@@ -67,7 +69,7 @@ func TestBucketPopEmpty(t *testing.T) {
 func TestBucketPushPop(t *testing.T) {
 	withEmptyBucket(t, func(bucket *Bucket) {
 		expItems := testutils.GenItems(0, 10, 1)
-		require.NoError(t, bucket.Push(expItems))
+		require.NoError(t, bucket.Push(expItems, true, ""))
 		gotItems, nPopped, err := bucket.Pop(len(expItems), nil, "")
 		require.NoError(t, err)
 		require.Equal(t, expItems, gotItems)
@@ -78,7 +80,7 @@ func TestBucketPushPop(t *testing.T) {
 func TestBucketPushPopReverse(t *testing.T) {
 	withEmptyBucket(t, func(bucket *Bucket) {
 		expItems := testutils.GenItems(10, 0, -1)
-		require.NoError(t, bucket.Push(expItems))
+		require.NoError(t, bucket.Push(expItems, true, ""))
 		gotItems, nPopped, err := bucket.Pop(len(expItems), nil, "")
 		require.NoError(t, err)
 		require.Equal(t, expItems, gotItems)
@@ -91,8 +93,8 @@ func TestBucketPushPopSorted(t *testing.T) {
 		push1 := testutils.GenItems(0, 10, 1)
 		push2 := testutils.GenItems(11, 20, 1)
 		expItems := append(push1, push2...)
-		require.NoError(t, bucket.Push(push2))
-		require.NoError(t, bucket.Push(push1))
+		require.NoError(t, bucket.Push(push2, true, ""))
+		require.NoError(t, bucket.Push(push1, true, ""))
 		gotItems, nPopped, err := bucket.Pop(len(push1)+len(push2), nil, "")
 		require.NoError(t, err)
 		require.Equal(t, len(push1)+len(push2), nPopped)
@@ -104,8 +106,8 @@ func TestBucketPushPopZip(t *testing.T) {
 	withEmptyBucket(t, func(bucket *Bucket) {
 		push1 := testutils.GenItems(0, 20, 2)
 		push2 := testutils.GenItems(1, 20, 2)
-		require.NoError(t, bucket.Push(push2))
-		require.NoError(t, bucket.Push(push1))
+		require.NoError(t, bucket.Push(push2, true, ""))
+		require.NoError(t, bucket.Push(push1, true, ""))
 		gotItems, nPopped, err := bucket.Pop(len(push1)+len(push2), nil, "")
 		require.NoError(t, err)
 
@@ -120,7 +122,7 @@ func TestBucketPushPopZip(t *testing.T) {
 func TestBucketPopSeveral(t *testing.T) {
 	withEmptyBucket(t, func(bucket *Bucket) {
 		expItems := testutils.GenItems(0, 10, 1)
-		require.NoError(t, bucket.Push(expItems))
+		require.NoError(t, bucket.Push(expItems, true, ""))
 		gotItems1, nPopped1, err := bucket.Pop(5, nil, "")
 		require.NoError(t, err)
 		gotItems2, nPopped2, err := bucket.Pop(5, nil, "")
@@ -136,8 +138,8 @@ func TestBucketPushPopSeveral(t *testing.T) {
 	withEmptyBucket(t, func(bucket *Bucket) {
 		push1 := testutils.GenItems(0, 20, 2)
 		push2 := testutils.GenItems(1, 20, 2)
-		require.NoError(t, bucket.Push(push2))
-		require.NoError(t, bucket.Push(push1))
+		require.NoError(t, bucket.Push(push2, true, ""))
+		require.NoError(t, bucket.Push(push1, true, ""))
 		gotItems1, nPopped1, err := bucket.Pop(10, nil, "")
 		require.NoError(t, err)
 		gotItems2, nPopped2, err := bucket.Pop(10, nil, "")
@@ -156,7 +158,7 @@ func TestBucketPushPopSeveral(t *testing.T) {
 func TestBucketPopLarge(t *testing.T) {
 	withEmptyBucket(t, func(bucket *Bucket) {
 		expItems := testutils.GenItems(0, 10, 1)
-		require.NoError(t, bucket.Push(expItems))
+		require.NoError(t, bucket.Push(expItems, true, ""))
 		gotItems, nPopped, err := bucket.Pop(20, nil, "")
 		require.NoError(t, err)
 		require.Equal(t, len(expItems), nPopped)
@@ -175,7 +177,7 @@ func TestBucketLen(t *testing.T) {
 		require.True(t, bucket.Empty(""))
 
 		expItems := testutils.GenItems(0, 10, 1)
-		require.NoError(t, bucket.Push(expItems))
+		require.NoError(t, bucket.Push(expItems, true, ""))
 		require.Equal(t, 10, bucket.Len(""))
 		require.False(t, bucket.Empty(""))
 
@@ -197,7 +199,7 @@ func TestBucketDeleteLowerThan(t *testing.T) {
 		require.True(t, bucket.Empty(""))
 
 		expItems := testutils.GenItems(0, 100, 1)
-		require.NoError(t, bucket.Push(expItems))
+		require.NoError(t, bucket.Push(expItems, true, ""))
 		require.Equal(t, 100, bucket.Len(""))
 
 		deleted, err := bucket.DeleteLowerThan("", 50)
@@ -225,7 +227,7 @@ func TestBucketDeleteLowerThanReopen(t *testing.T) {
 	require.True(t, bucket.Empty(""))
 
 	expItems := testutils.GenItems(0, 100, 1)
-	require.NoError(t, bucket.Push(expItems))
+	require.NoError(t, bucket.Push(expItems, true, ""))
 	require.Equal(t, 100, bucket.Len(""))
 
 	deleted, err := bucket.DeleteLowerThan("", 50)
@@ -251,7 +253,7 @@ func TestBucketPushDuplicates(t *testing.T) {
 		const pushes = 100
 		expItems := testutils.GenItems(0, 10, 1)
 		for idx := 0; idx < pushes; idx++ {
-			require.NoError(t, bucket.Push(expItems))
+			require.NoError(t, bucket.Push(expItems, true, ""))
 			require.Equal(t, (idx+1)*len(expItems), bucket.Len(""))
 		}
 
@@ -277,7 +279,7 @@ func TestBucketPeek(t *testing.T) {
 	withEmptyBucket(t, func(bucket *Bucket) {
 		const N = 100
 		exp := testutils.GenItems(0, N, 1)
-		require.NoError(t, bucket.Push(exp))
+		require.NoError(t, bucket.Push(exp, true, ""))
 
 		// peek should not delete something, so check it's idempotent.
 		for idx := 0; idx < 2; idx++ {
@@ -305,7 +307,7 @@ func TestBucketMove(t *testing.T) {
 
 	const N = 100
 	exp := testutils.GenItems(0, N, 1)
-	require.NoError(t, srcBuck.Push(exp))
+	require.NoError(t, srcBuck.Push(exp, true, ""))
 
 	// move the first elem:
 	moved, nshoveled, err := srcBuck.Move(1, nil, dstBuck, "")
@@ -374,8 +376,8 @@ func testBucketRegenWith(t *testing.T, isDamaged bool, reopen bool, damageFn fun
 		return int(i.Key - j.Key)
 	})
 
-	require.NoError(t, buck.Push(exp1))
-	require.NoError(t, buck.Push(exp2))
+	require.NoError(t, buck.Push(exp1, true, ""))
+	require.NoError(t, buck.Push(exp2, true, ""))
 	require.NoError(t, buck.Close())
 
 	bucketDir := filepath.Join(dir, buck.Key().String())
@@ -437,7 +439,7 @@ func testBucketReinitOnEmpty(t *testing.T, closeAfterReinit bool) {
 	defer os.RemoveAll(dir)
 
 	exp := testutils.GenItems(0, 100, 1)
-	require.NoError(t, buck.Push(exp))
+	require.NoError(t, buck.Push(exp, true, ""))
 	got, npopped, err := buck.Pop(100, nil, "")
 	require.NoError(t, err)
 	require.Equal(t, exp, got)
@@ -456,11 +458,36 @@ func testBucketReinitOnEmpty(t *testing.T, closeAfterReinit bool) {
 		require.NoError(t, err)
 	}
 
-	require.NoError(t, newBuck.Push(exp))
+	require.NoError(t, newBuck.Push(exp, true, ""))
 	got, npopped, err = newBuck.Pop(100, nil, "")
 	require.NoError(t, err)
 	require.Equal(t, exp, got)
 	require.Equal(t, 100, npopped)
 
 	require.NoError(t, newBuck.Close())
+}
+
+func TestBucketForkNameValidate(t *testing.T) {
+	require.NoError(t, ForkName("hello-world").Validate())
+	require.NoError(t, ForkName("HELLO_WORLD").Validate())
+	require.NoError(t, ForkName("0").Validate())
+	require.NoError(t, ForkName("fOrK999").Validate())
+	require.NoError(t, ForkName("_____").Validate())
+	require.NoError(t, ForkName("_-_-_").Validate())
+
+	require.Error(t, ForkName("").Validate())
+	require.Error(t, ForkName("space here").Validate())
+	require.Error(t, ForkName("space-at-the-end ").Validate())
+	require.Error(t, ForkName("fork/sub").Validate())
+	require.Error(t, ForkName("huh?").Validate())
+}
+
+func TestBucketForkInvalid(t *testing.T) {
+	withEmptyBucket(t, func(buck *Bucket) {
+		require.Error(t, buck.Fork("not-existing", "fork"))
+
+		// forking twice should not yield an error the second time:
+		require.NoError(t, buck.Fork("", "fork"))
+		require.NoError(t, buck.Fork("", "fork"))
+	})
 }

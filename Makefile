@@ -14,7 +14,7 @@ test:
 test_all:
 	@gotestsum -- --tags=slow -race -coverprofile=cover.out ./... -covermode=atomic -coverpkg $$(go list -f $$'{{range $$f := .Imports}}{{$$f}}\n{{end}}' ./... | grep timeq | sort | uniq | paste -sd ',')
 
-cover: test
+cover: test_all
 	go tool cover -html cover.out
 
 sloc:

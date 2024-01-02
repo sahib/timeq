@@ -1,6 +1,7 @@
 package bucket
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,7 +18,7 @@ func writeDummyBucket(t *testing.T, dir string, key item.Key, items item.Items) 
 	bucket, err := Open(bucketDir, nil, DefaultOptions())
 	require.NoError(t, err)
 
-	require.NoError(t, bucket.Push(items))
+	require.NoError(t, bucket.Push(items, true, ""))
 	require.NoError(t, bucket.Sync(true))
 	require.NoError(t, bucket.Close())
 }
@@ -236,4 +237,39 @@ func TestAPIBinsplitSeq(t *testing.T) {
 	for idx := 0; idx < len(items); idx++ {
 		require.Equal(t, 1, binsplit(items[idx:], item.Key(idx), idFunc))
 	}
+}
+
+func TestBucketsForkMultipleBuckets(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "timeq-bucketstest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	writeDummyBucket(t, dir, 10, testutils.GenItems(10, 20, 1))
+	writeDummyBucket(t, dir, 20, testutils.GenItems(20, 30, 1))
+	writeDummyBucket(t, dir, 30, testutils.GenItems(30, 40, 1))
+
+	opts := DefaultOptions()
+	opts.MaxParallelOpenBuckets = 1
+	bs, err := LoadAll(dir, opts)
+	require.NoError(t, err)
+
+	require.Empty(t, bs.Forks())
+
+	var forkNames []ForkName
+	for idx := 0; idx < 10; idx++ {
+		forkName := ForkName(fmt.Sprintf("fork%d", idx))
+		require.NoError(t, bs.Fork("", forkName))
+		forkNames = append(forkNames, forkName)
+	}
+
+	require.Equal(t, forkNames, bs.Forks())
+
+	for _, forkName := range forkNames {
+		require.NoError(t, bs.RemoveFork(forkName))
+	}
+
+	require.Empty(t, bs.Forks())
+	require.NoError(t, bs.Close())
 }

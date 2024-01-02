@@ -206,8 +206,13 @@ func MoveCopy(c Consumer, n int, dst *Queue) (Items, error) {
 
 /////////////
 
+// ForkName is the name of a fork. This is a special type to make it more
+// explicit that not every string is a valid fork name. Only alphanumeric
+// characters, dashes and underscores are allowed.
 type ForkName = bucket.ForkName
 
+// Fork is an implementation of the Consumer interface for a named fork.
+// See the Fork() method for more explanation.
 type Fork struct {
 	name ForkName
 	q    *Queue
@@ -220,7 +225,8 @@ var (
 )
 
 // Consumer is an interface that both Fork and Queue implement.
-// It covers every consumer related API.
+// It covers every consumer related API. Please refer to the respective
+// Queue methods for details.
 type Consumer interface {
 	Pop(n int, dst Items, fn ReadFn) error
 	Peek(n int, dst Items, fn ReadFn) error
