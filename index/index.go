@@ -100,7 +100,7 @@ func (i *Index) Set(loc item.Location) (item.Location, int) {
 	return loc, 0
 }
 
-func (i *Index) Delete(key item.Key) {
+func (i *Index) Delete(key item.Key) (loc item.Location) {
 	oldLocs, ok := i.m.Get(key)
 	if !ok {
 		return
@@ -115,6 +115,7 @@ func (i *Index) Delete(key item.Key) {
 	}
 
 	i.m.Delete(key)
+	return oldLocs[0]
 }
 
 // Len returns the number of items in the WAL.
