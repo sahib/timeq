@@ -111,7 +111,7 @@ func (i *Index) Delete(key item.Key) (loc item.Location) {
 	if len(oldLocs) > 1 {
 		// delete one of the keys:
 		i.m.Set(key, oldLocs[1:])
-		return
+		return oldLocs[0]
 	}
 
 	i.m.Delete(key)
