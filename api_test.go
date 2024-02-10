@@ -970,4 +970,37 @@ func TestAPIChainFork(t *testing.T) {
 	require.NoError(t, queue.Close())
 }
 
+func TestAPINegativKeys(t *testing.T) {
+	dir, err := os.MkdirTemp("", "timeq-apitest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	queue, err := Open(dir, DefaultOptions())
+	require.NoError(t, err)
+
+	require.NoError(t, queue.Push(testutils.GenItems(-100, +100, 1)))
+	require.NoError(t, queue.Push(testutils.GenItems(-100, +100, 1)))
+
+	for idx := 0; idx < 40; idx++ {
+		require.NoError(t, queue.Pop(10, nil, func(items Items) error {
+			for itemIdx, item := range items {
+				a := (idx*10 + itemIdx - 200)
+				if a <= 0 {
+					// trick to balance out the shift in negative numbers:
+					a -= 1
+				}
+				exp := a / 2
+				require.Equal(t, Key(exp), item.Key)
+			}
+			return nil
+		}))
+	}
+
+	require.NoError(t, queue.Close())
+}
+
+// TODO: Better testing for negative prio keys.
 // TODO: Test for bucket deletion on RemoveFork() and bucket deletion when all forks empty.
+// TODO: Refactor DeleteLowerThan to Delete(from, to)
+// TODO: Remove Move/Peek and make function return a boolean to indicate what to to with the
+//       peeked data (remove or keep)
