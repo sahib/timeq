@@ -1004,3 +1004,4 @@ func TestAPINegativKeys(t *testing.T) {
 // TODO: Test for bucket deletion on RemoveFork() and bucket deletion when all forks empty.
 // TODO: Remove Move/Peek and make function return a boolean to indicate what to to with the
 //       peeked data (remove or keep)
+// TODO: Try to get rid of some of the type alias stuff, as it's rather annoying in go docs.

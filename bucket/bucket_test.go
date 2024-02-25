@@ -196,6 +196,11 @@ func TestBucketLen(t *testing.T) {
 // TODO:
 //   - Test for deleting something in the middle of a loc.
 //   - Delete of multiple, overlapping locs.
+//   - Buckets test:
+//   - Delete all (int_min, int_max)
+//   - Delete first one only.
+//   - Delete last only.
+//   - One-off around a bucket
 func TestBucketDelete(t *testing.T) {
 	withEmptyBucket(t, func(bucket *Bucket) {
 		require.Equal(t, 0, bucket.Len(""))
@@ -219,37 +224,141 @@ func TestBucketDelete(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 49, deleted)
 		require.True(t, bucket.Empty(""))
+
+		// to < from
+		_, err = bucket.Delete("", 100, 99)
+		require.Error(t, err)
 	})
 }
 
-//	func TestBucketDeleteLowerThanReopen(t *testing.T) {
-//		bucket, dir := createEmptyBucket(t)
-//		defer os.RemoveAll(dir)
-//
-//		require.Equal(t, 0, bucket.Len(""))
-//		require.True(t, bucket.Empty(""))
-//
-//		expItems := testutils.GenItems(0, 100, 1)
-//		require.NoError(t, bucket.Push(expItems, true, ""))
-//		require.Equal(t, 100, bucket.Len(""))
-//
-//		deleted, err := bucket.DeleteLowerThan("", 50)
-//		require.NoError(t, err)
-//		require.Equal(t, 50, deleted)
-//		require.False(t, bucket.Empty(""))
-//
-//		// Re-open the bucket:
-//		require.NoError(t, bucket.Close())
-//		bucket, err = Open(bucket.dir, nil, bucket.opts)
-//		require.NoError(t, err)
-//
-//		// Pop should now see the previous 100:
-//		items, npopped, err := bucket.Pop(100, nil, "")
-//		require.Equal(t, 50, npopped)
-//		require.Equal(t, expItems[50:], items)
-//		require.NoError(t, err)
-//		require.NoError(t, bucket.Close())
-//	}
+func TestBucketDeleteLeftAndRight(t *testing.T) {
+	tcs := []struct {
+		Name     string
+		From, To item.Key
+	}{
+		{
+			Name: "full_inclusive",
+			From: 0,
+			To:   100,
+		}, {
+			Name: "full_high_to",
+			From: 0,
+			To:   1000,
+		}, {
+			Name: "full_low_from",
+			From: -100,
+			To:   100,
+		}, {
+			Name: "full_both",
+			From: -100,
+			To:   100,
+		}, {
+			Name: "partial_one_item",
+			From: 50,
+			To:   50,
+		}, {
+			Name: "partial_two_items",
+			From: 50,
+			To:   51,
+		}, {
+			Name: "leftmost",
+			From: 0,
+			To:   0,
+		}, {
+			Name: "rightmost",
+			From: 99,
+			To:   99,
+		}, {
+			Name: "right_only",
+			From: 0,
+			To:   10,
+		},
+	}
+
+	for _, tc := range tcs {
+		tc := tc
+		t.Run(tc.Name, func(t *testing.T) {
+			withEmptyBucket(t, func(bucket *Bucket) {
+				bucket.key = 0 // fake sets it with 23; we need 0 here.
+
+				require.Equal(t, 0, bucket.Len(""))
+				require.True(t, bucket.Empty(""))
+
+				expItems := testutils.GenItems(0, 100, 1)
+				require.NoError(t, bucket.Push(expItems, true, ""))
+				require.Equal(t, 100, bucket.Len(""))
+
+				clampedTo := tc.To
+				if tc.To > 99 {
+					clampedTo = 99
+				} else if tc.To < 0 {
+					clampedTo = 0
+				}
+
+				clampedFrom := tc.From
+				if tc.From < 0 {
+					clampedFrom = 0
+				} else if tc.From > 99 {
+					clampedFrom = 99
+				}
+
+				ndeletedExp := clampedTo - clampedFrom + 1
+
+				ndeleted, err := bucket.Delete("", tc.From, tc.To)
+				require.NoError(t, err)
+				require.Equal(t, ndeletedExp, item.Key(ndeleted))
+
+				got, npeeked, err := bucket.Peek(100, item.Items{}, "")
+				require.Equal(t, 100-ndeleted, npeeked)
+				require.NoError(t, err)
+				require.Equal(
+					t,
+					append(
+						expItems[:clampedFrom],
+						expItems[clampedTo+1:]...,
+					),
+					got,
+				)
+
+				if ndeleted == 100 {
+					require.True(t, bucket.Empty(""))
+				} else {
+					require.False(t, bucket.Empty(""))
+				}
+			})
+		})
+	}
+}
+
+func TestBucketDeleteLowerThanReopen(t *testing.T) {
+	bucket, dir := createEmptyBucket(t)
+	defer os.RemoveAll(dir)
+
+	require.Equal(t, 0, bucket.Len(""))
+	require.True(t, bucket.Empty(""))
+
+	expItems := testutils.GenItems(0, 100, 1)
+	require.NoError(t, bucket.Push(expItems, true, ""))
+	require.Equal(t, 100, bucket.Len(""))
+
+	deleted, err := bucket.Delete("", 0, 50)
+	require.NoError(t, err)
+	require.Equal(t, 51, deleted)
+	require.False(t, bucket.Empty(""))
+
+	// Re-open the bucket:
+	require.NoError(t, bucket.Close())
+	bucket, err = Open(bucket.dir, nil, bucket.opts)
+	require.NoError(t, err)
+
+	// Pop should now see the previous 100:
+	items, npopped, err := bucket.Pop(100, nil, "")
+	require.Equal(t, 49, npopped)
+	require.Equal(t, expItems[51:], items)
+	require.NoError(t, err)
+	require.NoError(t, bucket.Close())
+}
+
 func TestBucketPushDuplicates(t *testing.T) {
 	withEmptyBucket(t, func(bucket *Bucket) {
 		const pushes = 100

@@ -484,7 +484,7 @@ func (b *Bucket) popSync(idx Index, batchIters *vlog.Iters) error {
 }
 
 func (b *Bucket) Delete(fork ForkName, from, to item.Key) (ndeleted int, outErr error) {
-	defer recoverMmapError(&outErr) // TODO: add again.
+	defer recoverMmapError(&outErr)
 
 	if b.key > to {
 		// this bucket is safe from the clear.
@@ -493,14 +493,16 @@ func (b *Bucket) Delete(fork ForkName, from, to item.Key) (ndeleted int, outErr 
 		return 0, nil
 	}
 
+	if to < from {
+		return 0, fmt.Errorf("to < from in bucket delete (%d < %d)", to, from)
+	}
+
 	idx, err := b.idxForFork(fork)
 	if err != nil {
 		return 0, err
 	}
 
 	lenBefore := idx.Mem.Len()
-
-	// Jump to the first index that is affected:
 
 	var pushErr error
 	var deleteEntries []item.Key
