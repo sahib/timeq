@@ -616,44 +616,72 @@ func (bs *Buckets) Read(op ReadOp, n int, dst item.Items, fork ForkName, fn Read
 	})
 }
 
-func (bs *Buckets) DeleteLowerThan(fork ForkName, key item.Key) (int, error) {
+func (bs *Buckets) Delete(fork ForkName, from, to item.Key) (int, error) {
 	var numDeleted int
-	var deletableBucks []*Bucket
+	var deletableBucks []item.Key
+
+	if to < from {
+		return 0, fmt.Errorf("delete: `to` must be >= `from`")
+	}
 
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 
-	err := bs.iter(Load, func(bucketKey item.Key, buck *Bucket) error {
-		if bucketKey >= key {
-			// stop loading buckets if not necessary.
-			return IterStop
+	// use the bucket func to figure out which buckets the range limits would be in.
+	// those buckets might not really exist though.
+	toBuckKey := bs.opts.BucketFunc(to)
+	fromBuckKey := bs.opts.BucketFunc(from)
+
+	iter := bs.tree.Iter()
+	if !iter.Seek(fromBuckKey) {
+		// all buckets that we have are > to. Nothing to delete.
+		return 0, nil
+	}
+
+	// Seek() already sets the iter.Value(), so iteration becomes a bit awkward.
+	for {
+		buckKey := iter.Key()
+		if buckKey > toBuckKey {
+			// too far, stop it.
+			break
 		}
 
-		numDeletedOfBucket, err := buck.DeleteLowerThan(fork, key)
+		buck, err := bs.forKey(buckKey)
 		if err != nil {
 			if bs.opts.ErrorMode == ErrorModeAbort {
-				return err
+				return numDeleted, err
 			}
 
 			// try with the next bucket in the hope that it works:
-			bs.opts.Logger.Printf("failed to delete : %v", err)
-			return nil
+			bs.opts.Logger.Printf(
+				"failed to open %v for deletion delete : %v",
+				buckKey,
+				err,
+			)
+		} else {
+			numDeletedOfBucket, err := buck.Delete(fork, from, to)
+			if err != nil {
+				if bs.opts.ErrorMode == ErrorModeAbort {
+					return numDeleted, err
+				}
+
+				// try with the next bucket in the hope that it works:
+				bs.opts.Logger.Printf("failed to delete : %v", err)
+			} else {
+				numDeleted += numDeletedOfBucket
+				if buck.AllEmpty() {
+					deletableBucks = append(deletableBucks, buckKey)
+				}
+			}
 		}
 
-		numDeleted += numDeletedOfBucket
-		if buck.AllEmpty() {
-			deletableBucks = append(deletableBucks, buck)
+		if !iter.Next() {
+			break
 		}
-
-		return nil
-	})
-
-	if err != nil {
-		return numDeleted, err
 	}
 
-	for _, bucket := range deletableBucks {
-		if err := bs.delete(bucket.Key()); err != nil {
+	for _, bucketKey := range deletableBucks {
+		if err := bs.delete(bucketKey); err != nil {
 			return numDeleted, fmt.Errorf("bucket delete: %w", err)
 		}
 	}

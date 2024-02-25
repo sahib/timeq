@@ -3,6 +3,7 @@ package parser
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -131,9 +132,13 @@ func Run(args []string) error {
 			Usage:   "Clear the queue until a certain point",
 			Action:  withQueue(handleClear),
 			Flags: []cli.Flag{
-				cli.IntFlag{
-					Name:  "u,until",
-					Usage: "Until what key to delete",
+				cli.Int64Flag{
+					Name:  "f,from",
+					Usage: "Lowest key to delete key to delete (including)",
+				},
+				cli.Int64Flag{
+					Name:  "t,to",
+					Usage: "Highest key key to delete (including)",
 				},
 			},
 		}, {
@@ -249,7 +254,7 @@ func handleLen(_ *cli.Context, q *timeq.Queue) error {
 }
 
 func handleClear(ctx *cli.Context, q *timeq.Queue) error {
-	if !ctx.IsSet("until") {
+	if !ctx.IsSet("to") && !ctx.IsSet("from") {
 		size := q.Len()
 		if err := q.Clear(); err != nil {
 			return err
@@ -259,7 +264,17 @@ func handleClear(ctx *cli.Context, q *timeq.Queue) error {
 		return nil
 	}
 
-	deleted, err := q.DeleteLowerThan(timeq.Key(ctx.Int("until")))
+	from := ctx.Int64("from")
+	if !ctx.IsSet("from") {
+		from = math.MinInt64
+	}
+
+	to := ctx.Int64("to")
+	if !ctx.IsSet("to") {
+		to = math.MaxInt64
+	}
+
+	deleted, err := q.Delete(timeq.Key(from), timeq.Key(to))
 	if err != nil {
 		return err
 	}

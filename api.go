@@ -110,9 +110,11 @@ func (q *Queue) Move(n int, dst Items, dstQueue *Queue, fn ReadFn) error {
 	return q.buckets.Read(bucket.ReadOpMove, n, dst, "", fn, dstQueue.buckets)
 }
 
-// DeleteLowerThan deletes all items lower than `key`.
-func (q *Queue) DeleteLowerThan(key Key) (int, error) {
-	return q.buckets.DeleteLowerThan("", key)
+// Delete deletes all items in the range `from` to `to`.
+// Both `from` and `to` are including, i.e. keys with this value are deleted.
+// The number of deleted items is returned.
+func (q *Queue) Delete(from, to Key) (int, error) {
+	return q.buckets.Delete("", from, to)
 }
 
 // Len returns the number of items in the queue.
@@ -231,7 +233,7 @@ type Consumer interface {
 	Pop(n int, dst Items, fn ReadFn) error
 	Peek(n int, dst Items, fn ReadFn) error
 	Move(n int, dst Items, dstQueue *Queue, fn ReadFn) error
-	DeleteLowerThan(key Key) (int, error)
+	Delete(from, to Key) (int, error)
 	Shovel(dst *Queue) (int, error)
 	Len() int
 	Fork(name ForkName) (*Fork, error)
@@ -275,12 +277,13 @@ func (f *Fork) Len() int {
 	return f.q.buckets.Len(f.name)
 }
 
-// DeleteLowerThan is like Queue.DeleteLowerThan().
-func (f *Fork) DeleteLowerThan(key Key) (int, error) {
+// Delete is like Queue.Delete().
+func (f *Fork) Delete(from, to Key) (int, error) {
 	if f.q == nil {
 		return 0, ErrNoSuchFork
 	}
-	return f.q.buckets.DeleteLowerThan(f.name, key)
+
+	return f.q.buckets.Delete(f.name, from, to)
 }
 
 // Remove removes this fork. If the fork is used after this, the API

@@ -483,11 +483,13 @@ func (b *Bucket) popSync(idx Index, batchIters *vlog.Iters) error {
 	return idx.Log.Sync(false)
 }
 
-func (b *Bucket) DeleteLowerThan(fork ForkName, key item.Key) (ndeleted int, outErr error) {
-	defer recoverMmapError(&outErr)
+func (b *Bucket) Delete(fork ForkName, from, to item.Key) (ndeleted int, outErr error) {
+	defer recoverMmapError(&outErr) // TODO: add again.
 
-	if b.key >= key {
+	if b.key > to {
 		// this bucket is safe from the clear.
+		// NOTE: We can't check `from` here as we don't know
+		// how big our bucket is. Could be more efficient if we did...
 		return 0, nil
 	}
 
@@ -498,49 +500,72 @@ func (b *Bucket) DeleteLowerThan(fork ForkName, key item.Key) (ndeleted int, out
 
 	lenBefore := idx.Mem.Len()
 
+	// Jump to the first index that is affected:
+
 	var pushErr error
 	var deleteEntries []item.Key
 	var partialSetEntries []item.Location
+
 	for iter := idx.Mem.Iter(); iter.Next(); {
 		loc := iter.Value()
-		if loc.Key >= key {
+		if loc.Key > to {
 			// this index entry may live untouched.
 			break
 		}
 
-		// we need to check until what point we need to delete.
-		var partialFound bool
-		var partialLoc item.Location
+		// `loc` needs to be at least partly deleted.
+		// go figure out what part of it.
+		leftLoc := loc
+		leftLoc.Len = 0
+		rightLoc := item.Location{}
 
 		logIter := b.logAt(loc)
 		for logIter.Next() {
-			partialItem := logIter.Item()
-			partialLoc = logIter.CurrentLocation()
-			if partialItem.Key >= key {
-				partialFound = true
+			item := logIter.Item()
+			if item.Key < from {
+				// key is not affected by the deletion; keep it.
+				leftLoc.Len++
+			}
+
+			if item.Key > to && rightLoc.Len == 0 {
+				// keys not affected starting here; save position and then
+				// go remember that part later on.
+				rightLoc = logIter.CurrentLocation()
 				break
 			}
 		}
 
-		if partialFound {
-			// we found an entry in the log that is >= key.
-			// resize the index entry to skip the entries before.
-			// we should be careful not to mutate the map during iteration:
-			// https://github.com/tidwall/btree/issues/39
-			partialSetEntries = append(partialSetEntries, partialLoc)
-			ndeleted += int(loc.Len - partialLoc.Len)
+		locShrinked := int(loc.Len - leftLoc.Len - rightLoc.Len)
+		if locShrinked == 0 {
+			// location was not actually affected; nothing to do.
+			continue
+		}
+
+		// always delete the original entry,
+		// we need to do that outside of the iteration,
+		// as the iter will break otherwise.
+		deleteEntries = append(deleteEntries, loc.Key)
+		ndeleted += locShrinked
+
+		if leftLoc.Len > 0 {
+			partialSetEntries = append(partialSetEntries, leftLoc)
 			pushErr = errors.Join(
 				pushErr,
-				idx.Log.Push(partialLoc, index.Trailer{
+				idx.Log.Push(leftLoc, index.Trailer{
+					TotalEntries: lenBefore - loc.Len - leftLoc.Len,
+				}),
+			)
+		}
+
+		if rightLoc.Len > 0 {
+			partialSetEntries = append(partialSetEntries, rightLoc)
+			pushErr = errors.Join(
+				pushErr,
+				idx.Log.Push(rightLoc, index.Trailer{
 					TotalEntries: lenBefore - item.Off(ndeleted),
 				}),
 			)
-		} else {
-			// nothing found, this index entry can be dropped.
-			ndeleted += int(loc.Len)
 		}
-
-		deleteEntries = append(deleteEntries, loc.Key)
 	}
 
 	for _, key := range deleteEntries {
@@ -633,28 +658,29 @@ func forkOffline(buckDir string, src, dst ForkName) error {
 	return copy.Copy(srcPath, dstPath, opts)
 }
 
-// moveBucketOffline copies and removes the bucket at `src` to `dst` (assuming
-// it does not exist yet) and copies only the fork named `name` while doing so.
-func moveBucketOffline(src, dst string, name ForkName) error {
-	srcIdxPath := idxPath(src, name)
-	dstIdxPath := idxPath(src, name)
-	srcDataLog := filepath.Join(src, "dat.log")
-	dstDataLog := filepath.Join(src, "dat.log")
-
-	if err := os.MkdirAll(dst, 0700); err != nil {
-		return err
-	}
-
-	// Move the relevant files:
-	if err := errors.Join(
-		moveFileOrDir(srcDataLog, dstDataLog),
-		moveFileOrDir(srcIdxPath, dstIdxPath),
-	); err != nil {
-		return err
-	}
-
-	return os.RemoveAll(src)
-}
+// TODO: Is that still needed?
+// // moveBucketOffline copies and removes the bucket at `src` to `dst` (assuming
+// // it does not exist yet) and copies only the fork named `name` while doing so.
+// func moveBucketOffline(src, dst string, name ForkName) error {
+// 	srcIdxPath := idxPath(src, name)
+// 	dstIdxPath := idxPath(src, name)
+// 	srcDataLog := filepath.Join(src, "dat.log")
+// 	dstDataLog := filepath.Join(src, "dat.log")
+//
+// 	if err := os.MkdirAll(dst, 0700); err != nil {
+// 		return err
+// 	}
+//
+// 	// Move the relevant files:
+// 	if err := errors.Join(
+// 		moveFileOrDir(srcDataLog, dstDataLog),
+// 		moveFileOrDir(srcIdxPath, dstIdxPath),
+// 	); err != nil {
+// 		return err
+// 	}
+//
+// 	return os.RemoveAll(src)
+// }
 
 func (b *Bucket) RemoveFork(fork ForkName) error {
 	idx, err := b.idxForFork(fork)

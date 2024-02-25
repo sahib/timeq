@@ -208,7 +208,7 @@ func testAPIShovelSlowPath(t *testing.T, reopen bool) {
 	require.NoError(t, q2.Close())
 }
 
-func TestAPIDeleteLowerThan(t *testing.T) {
+func TestAPIDelete(t *testing.T) {
 	t.Parallel()
 
 	dir, err := os.MkdirTemp("", "timeq-apitest")
@@ -226,29 +226,29 @@ func TestAPIDeleteLowerThan(t *testing.T) {
 	// Deleting the first half should work without issue:
 	exp := testutils.GenItems(0, 1000, 1)
 	require.NoError(t, queue.Push(exp))
-	ndeleted, err := queue.DeleteLowerThan(500)
+	ndeleted, err := queue.Delete(0, 500)
 	require.NoError(t, err)
-	require.Equal(t, 500, ndeleted)
+	require.Equal(t, 501, ndeleted)
 
 	// Deleting the same should yield 0 now.
-	ndeleted, err = queue.DeleteLowerThan(500)
+	ndeleted, err = queue.Delete(0, 500)
 	require.NoError(t, err)
 	require.Equal(t, 0, ndeleted)
 
 	// Do a partial delete of a bucket:
-	ndeleted, err = queue.DeleteLowerThan(501)
+	ndeleted, err = queue.Delete(0, 501)
 	require.NoError(t, err)
 	require.Equal(t, 1, ndeleted)
 
 	// Delete more than what is left:
-	ndeleted, err = queue.DeleteLowerThan(2000)
+	ndeleted, err = queue.Delete(0, 2000)
 	require.NoError(t, err)
-	require.Equal(t, 499, ndeleted)
+	require.Equal(t, 498, ndeleted)
 
 	// Try with a fork:
 	f, err := queue.Fork("fork")
 	require.NoError(t, err)
-	ndeleted, err = f.DeleteLowerThan(2000)
+	ndeleted, err = f.Delete(0, 2000)
 	require.NoError(t, err)
 	require.Equal(t, 0, ndeleted)
 
@@ -473,14 +473,14 @@ func testAPIErrorModePop(t *testing.T, mode bucket.ErrorMode) {
 func TestAPIErrorModeDelete(t *testing.T) {
 	t.Parallel()
 	t.Run("abort", func(t *testing.T) {
-		testAPIErrorModeDeleteLowerThan(t, bucket.ErrorModeAbort)
+		testAPIErrorModeDelete(t, bucket.ErrorModeAbort)
 	})
 	t.Run("continue", func(t *testing.T) {
-		testAPIErrorModeDeleteLowerThan(t, bucket.ErrorModeContinue)
+		testAPIErrorModeDelete(t, bucket.ErrorModeContinue)
 	})
 }
 
-func testAPIErrorModeDeleteLowerThan(t *testing.T, mode bucket.ErrorMode) {
+func testAPIErrorModeDelete(t *testing.T, mode bucket.ErrorMode) {
 	t.Parallel()
 
 	dir, err := os.MkdirTemp("", "timeq-apitest")
@@ -502,12 +502,13 @@ func testAPIErrorModeDeleteLowerThan(t *testing.T, mode bucket.ErrorMode) {
 	require.NoError(t, queue.Push(testutils.GenItems(0, 100, 1)))
 
 	// truncate the data log of a single bucket.
+	// this will trigger a panic when working with the mmap.
 	require.NoError(
 		t,
 		os.Truncate(filepath.Join(dir, Key(0).String(), bucket.DataLogName), 0),
 	)
 
-	ndeleted, err := queue.DeleteLowerThan(100)
+	ndeleted, err := queue.Delete(0, 100)
 	if mode == bucket.ErrorModeContinue {
 		require.NotEmpty(t, logger.String())
 		require.NoError(t, err)
@@ -1001,6 +1002,5 @@ func TestAPINegativKeys(t *testing.T) {
 
 // TODO: Better testing for negative prio keys.
 // TODO: Test for bucket deletion on RemoveFork() and bucket deletion when all forks empty.
-// TODO: Refactor DeleteLowerThan to Delete(from, to)
 // TODO: Remove Move/Peek and make function return a boolean to indicate what to to with the
 //       peeked data (remove or keep)
