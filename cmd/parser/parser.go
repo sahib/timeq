@@ -333,7 +333,8 @@ func handleLogDump(ctx *cli.Context) error {
 	}
 
 	var loc = item.Location{Len: 1e9}
-	for iter := log.At(loc, true); iter.Next(); {
+	iter := log.At(loc, true)
+	for err := iter.Next(log); err == nil; err = iter.Next(log) {
 		it := iter.Item()
 		fmt.Printf("%v:%s\n", it.Key, it.Blob)
 	}

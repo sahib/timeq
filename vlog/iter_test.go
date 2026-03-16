@@ -36,7 +36,10 @@ func TestIter(t *testing.T) {
 
 	var count int
 	iter := log.At(loc, true)
-	for iter.Next() {
+
+	errIter := iter.Next(log)
+	require.NoError(t, errIter)
+	for ; errIter == nil; errIter = iter.Next(log) {
 		it := iter.Item()
 		require.Equal(t, item.Item{
 			Key:  item.Key(count + 10),
@@ -54,7 +57,7 @@ func TestIter(t *testing.T) {
 	}
 
 	require.Equal(t, 10, count)
-	require.NoError(t, iter.Err())
+	require.NoError(t, IterReportNonExhaustError(errIter))
 	require.NoError(t, log.Close())
 }
 
@@ -69,8 +72,7 @@ func TestIterEmpty(t *testing.T) {
 	require.NoError(t, err)
 	iter := log.At(item.Location{}, true)
 
-	require.False(t, iter.Next())
-	require.NoError(t, iter.Err())
+	require.NoError(t, IterReportNonExhaustError(iter.Next(log)))
 	require.NoError(t, log.Close())
 }
 
@@ -88,9 +90,8 @@ func TestIterInvalidLocation(t *testing.T) {
 		Len: 1000,
 	}, true)
 
-	require.False(t, iter.Next())
+	require.NoError(t, IterReportNonExhaustError(iter.Next(log)))
 	require.True(t, iter.Exhausted())
-	require.NoError(t, iter.Err())
 	require.NoError(t, log.Close())
 }
 
@@ -131,12 +132,12 @@ func testIterBrokenStream(t *testing.T, overwriteIndex int, continueOnErr bool) 
 	// value at least:
 	iter := log.At(loc, continueOnErr)
 	if continueOnErr {
-		require.True(t, iter.Next())
+		require.NoError(t, IterReportNonExhaustError(iter.Next(log)))
 		it := iter.Item()
 		require.Equal(t, item.Key(42), it.Key)
 		require.Equal(t, item2.Blob, it.Blob)
 	}
-	require.False(t, iter.Next())
+	require.Error(t, iter.Next(log))
 }
 
 func TestIterHeap(t *testing.T) {

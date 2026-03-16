@@ -292,9 +292,9 @@ func (b *bucket) logAt(loc item.Location) vlog.Iter {
 func (b *bucket) addIter(batchIters *vlog.Iters, idxIter *index.Iter) (bool, error) {
 	loc := idxIter.Value()
 	batchIter := b.logAt(loc)
-	if !batchIter.Next() {
+	if err := vlog.IterReportNonExhaustError(batchIter.Next(b.log)); err != nil {
 		// might be empty or I/O error:
-		return false, batchIter.Err()
+		return false, err
 	}
 
 	batchIters.Push(batchIter)
@@ -384,9 +384,9 @@ func (b *bucket) peek(n int, dst item.Items, idx *index.Index) (batchIters *vlog
 		// advance current batch iter. We will make sure at the
 		// end of the loop that the currently first one gets sorted
 		// correctly if it turns out to be out-of-order.
-		currIter.Next()
+		err := currIter.Next(b.log)
 		currKey := currIter.Item().Key
-		if err := currIter.Err(); err != nil {
+		if err := vlog.IterReportNonExhaustError(err); err != nil {
 			return nil, dst, 0, err
 		}
 
@@ -494,7 +494,7 @@ func (b *bucket) Delete(fork ForkName, from, to item.Key) (ndeleted int, outErr 
 		rightLoc := item.Location{}
 
 		logIter := b.logAt(loc)
-		for logIter.Next() {
+		for err := logIter.Next(b.log); err == nil; err = logIter.Next(b.log) {
 			item := logIter.Item()
 			if item.Key < from {
 				// key is not affected by the deletion; keep it.

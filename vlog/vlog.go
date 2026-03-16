@@ -191,8 +191,7 @@ func (l *Log) At(loc item.Location, continueOnErr bool) Iter {
 	return Iter{
 		firstKey:      loc.Key,
 		currOff:       loc.Off,
-		currLen:       loc.Len,
-		log:           l,
+		currLen:       uint32(loc.Len),
 		continueOnErr: continueOnErr,
 	}
 }
